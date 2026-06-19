@@ -1,0 +1,4 @@
+.pio
+.vscode
+src/user_config.h
+test/user_config.h
