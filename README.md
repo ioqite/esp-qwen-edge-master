@@ -1,27 +1,18 @@
-##### 本项目可供自行DIY, 如要复刻可根据以下步骤 #####
 
-#### 1. 准备材料: ####
+# ESP Qwen Edge - Master #
 
- - 1 \* ESP32-S3-2寸LCD开发板
+### 当前文档未完善 ###
 
- <!-- - 1 \* ESP32-S3-CAM 开发板(推荐加OV2640,可以给LCD开发板用) -->
+## 项目介绍 
+该项目是一个基于ESP32-S3的智能终端设备，集成了2英寸LCD显示屏、语音识别（STT）(正在实现)、IMU传感器，并通过 阿里云Qwen大模型 实现AI对话功能, 可选择不同模型。支持WiFi连接、SD卡读取、LVGL图形界面和拼音输入法(正在实现)。
 
- <!-- - 2 \* 可拆分面包板 -->
+## 本项目可供自行DIY, 如要复刻可根据以下步骤 ##
 
- <!-- - 很多跳线 -->
-
-##### 购买链接（含参考价）：#####
+### 1. 准备材料 (购买链接, 含参考价) : ###
 
  -  72.8元 \- [ESP32-S3-2寸LCD开发板](https://item.taobao.com/item.htm?id=965108138294&skuId=5908711489110)
 
- <!-- -  22.5元 \- [ESP32-S3-CAM 开发板](https://item.taobao.com/item.htm?id=801266434816&skuId=5626353058066)(S3-CAM相比S3标准版比功能多，颜值高，价格也一样) -->
- <!-- \- 36.1元 \- (极其推荐)可选 [加OV2640版](https://item.taobao.com/item.htm?id=761472478683&skuId=5417207790508) -->
-
- <!-- -  1.35元 \- [可拆分面包板](https://item.taobao.com/item.htm?id=609168738831) -->
-
- <!-- -  4.5元 \- [跳线](https://item.taobao.com/item.htm?id=821115090967) -->
-
-#### 2. 准备环境: ####
+### 2. 准备环境: ###
 本项目使用 PlatformIO 开发，也可以用 Arduino。
 推荐使用 VSCode + PlatformIO （编译速度比 Arduino 快）
 
@@ -31,11 +22,18 @@ Arduino：[安装和配置 Arduino IDE - 微雪文档](https://docs.waveshare.ne
 
 如果是第一次用，可以先试一下 Hello World。
 
-#### 3. 下载代码: ####
+### 3. 下载代码: ###
 
 ```shell
-git clone https://github.com/ioqite/qwen-in-esp-lcd.git
+git clone https://github.com/ioqite/esp-qwen-edge-master.git
 ```
 
+### 4. 配置变量: ###
 
+- `QWEN_API_SECRET_KEY`: 从阿里云Qwen大模型获取的API密钥
+- `ssids` 和 `passwords`: 可供启动时选择的 WiFi 的 SSID 和 密码
+
+### 5. 编译烧录 ###
+
+### 未完待续 ###
 
