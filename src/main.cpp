@@ -58,7 +58,8 @@ const char* sntpServers[] = {  // 实际只使用 第1个
 };
 
 // 文本快捷键
-const char* TEXT_SHORTCUT[9] = {"用", "控制", "是", "什么", "如何", "有", "中", "的", "详细说一下"};
+#define TEXT_SHORTCUT_SIZE 9
+const char* TEXT_SHORTCUT[TEXT_SHORTCUT_SIZE] = {"用", "控制", "是", "什么", "如何", "有", "中", "的", "详细说一下"};
 
 int16_t audioData[2560];
 int16_t *pcm_data; // 录音缓存区
@@ -397,39 +398,42 @@ void my_loop(void *param) {
 			vTaskDelay(700 / portTICK_PERIOD_MS);
 
 			ta_set_text(user_prompt.c_str());
-		} else if (proc_key.length() >= 3 && proc_key.startsWith("$S") && proc_key[2]-'0' >= 0 && proc_key[2]-'0' <= MAX_CHAT_WINDOW) {
+		} else if (proc_key.length() >= 3 && proc_key.startsWith("$S") && proc_key.substring(2).toInt() > 0 && proc_key.substring(2).toInt() <= MAX_CHAT_WINDOW) {
 			if (lvgl_mux_lock()) { // 上锁
 				chat_windows[chat_window_select].ta_text = lv_textarea_get_text(g_ta);
 				chat_windows[chat_window_select].main_label_text = lv_label_get_text(main_label);
 				
-				lv_textarea_set_text(g_ta, (String("当前对话窗口: ") + (uint16_t)(chat_window_select+1) + " -> " + (uint16_t)(proc_key[2]-'0')).c_str());
+				lv_textarea_set_text(g_ta, 
+					(String("当前对话窗口: ") + (uint16_t)(chat_window_select+1) + " -> " + 
+					proc_key.substring(2).toInt()).c_str()
+				);
 				lvgl_mutex_unlock(); // 解锁
 
-				chat_window_select = proc_key[2] - '0' - 1;
+				chat_window_select = proc_key.substring(2).toInt() - 1;
 				main_label_set_text(chat_windows[chat_window_select].main_label_text.c_str());
 			}
 
 			vTaskDelay(700 / portTICK_PERIOD_MS);
 			
 			ta_set_text(chat_windows[chat_window_select].ta_text.c_str());
-		} else if (proc_key == "$1") {
-			ta_add_text(TEXT_SHORTCUT[0]);
-		} else if (proc_key == "$2") {
-			ta_add_text("控制");
-		} else if (proc_key == "$3") {
-			ta_add_text("是");
-		} else if (proc_key == "$4") {
-			ta_add_text("什么");
-		} else if (proc_key == "$5") {
-			ta_add_text("如何");
-		} else if (proc_key == "$6") {
-			ta_add_text("有");
-		} else if (proc_key == "$7") {
-			ta_add_text("中");
-		} else if (proc_key == "$8") {
-			ta_add_text("的");
-		} else if (proc_key == "$9") {
-			ta_add_text("详细说一下");
+		} else if (proc_key.length() >= 2 && proc_key.startsWith("$") && proc_key.substring(1).toInt() > 0 && proc_key.substring(1).toInt() <= TEXT_SHORTCUT_SIZE) {
+			ta_add_text(TEXT_SHORTCUT[ proc_key.substring(1).toInt() - 1 ]);
+		// } else if (proc_key == "$2") {
+		// 	ta_add_text("控制");
+		// } else if (proc_key == "$3") {
+		// 	ta_add_text("是");
+		// } else if (proc_key == "$4") {
+		// 	ta_add_text("什么");
+		// } else if (proc_key == "$5") {
+		// 	ta_add_text("如何");
+		// } else if (proc_key == "$6") {
+		// 	ta_add_text("有");
+		// } else if (proc_key == "$7") {
+		// 	ta_add_text("中");
+		// } else if (proc_key == "$8") {
+		// 	ta_add_text("的");
+		// } else if (proc_key == "$9") {
+		// 	ta_add_text("详细说一下");
 		} else if (proc_key == "$10") {
 			reset_chat_history();
 		} else if (proc_key == "$11") {
