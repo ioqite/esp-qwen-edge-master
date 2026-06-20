@@ -51,11 +51,14 @@ lv_obj_t * g_kb;
 // GMT 时间偏移量 (秒)
 #define GMT_OFFSET_SEC 8 * 3600
 // SNTP 服务器
-const char* ntpServers[] = {  // 实际只使用 第1个
+const char* sntpServers[] = {  // 实际只使用 第1个
 	"ntp.cnnic.cn",              // CNNIC
 	"ntp.tuna.tsinghua.edu.cn",  // TUNA
 	"ntp.aliyun.com"             // 阿里云
 };
+
+// 文本快捷键
+const char* TEXT_SHORTCUT[9] = {"用", "控制", "是", "什么", "如何", "有", "中", "的", "详细说一下"};
 
 int16_t audioData[2560];
 int16_t *pcm_data; // 录音缓存区
@@ -65,6 +68,7 @@ using namespace websockets;
 WebsocketsClient client;
 
 String stttext = "";
+bool stt_is_done = false;
 
 bool transferring_key = 0;     // 开始接收新的键 (有的键是多字母的)
 bool skip_wifi = 0;            // 是否跳过WiFi连接
@@ -72,12 +76,22 @@ bool connecting_wifi = false;  // 是否正在连接WiFi
 bool syncing_sntp = false;     // 是否正在同步SNTP时间
 
 // ###################### 对话管理 #########################
-// 最大保存的对话轮数
+// 最大对话窗口 个数
+#define MAX_CHAT_WINDOW 5
+// 最大 保存的对话轮数
 #define MAX_MESSAGES 20
-// 使用一个数组来存储每一条JSON格式的消息
-String chatHistory[MAX_MESSAGES * 2 + 1]; 
-uint8_t messageCount = 0;  // 当前历史消息数量
 
+struct chat_window_t{
+	String ta_text;
+	String main_label_text;
+	std::vector<String> chatHistory; // 使用一个数组来存储 每一条JSON格式的消息(String) max:MAX_MESSAGES * 2 + 1
+	// uint8_t messageCount = 0;  // 当前历史消息数量
+} chat_windows[MAX_CHAT_WINDOW];
+
+// 当前选中的 对话窗口
+uint8_t chat_window_select = 0;
+
+// ###################### 请求管理 #########################
 // 请求所需变量
 String response;
 String answer;
@@ -86,12 +100,13 @@ String proced;
 // 用户提示词
 String user_prompt = "";
 
-// 储存 时间信息
-tm timeinfo;
-
 bool show_proced = 0;   // 是否显示 预处理过的 提示词, 由 $# 键切换
 uint8_t bypass_proc = 0; // 是否跳过 拼音预处理, 由 $@ 键切换
 // bool enable_search = 0; // 是否启用 联网搜索
+
+// ###################### other #########################
+// 储存 时间信息
+tm timeinfo;
 
 // 屏幕, More: https://github.com/moononournation/Arduino_GFX/wiki/
 Arduino_DataBus *bus = new Arduino_ESP32SPI(EXAMPLE_PIN_NUM_LCD_DC, EXAMPLE_PIN_NUM_LCD_CS, EXAMPLE_PIN_NUM_LCD_SCLK, EXAMPLE_PIN_NUM_LCD_MOSI, EXAMPLE_PIN_NUM_LCD_MISO, FSPI /* spi_num */, true);
@@ -221,7 +236,7 @@ void wait_wifi_connection(void *param) {
 	// SNTP 时间同步
 	Serial.print("使用 SNTP 同步时间 ...");
 	main_label_set_text("#10acb1 使用 SNTP 同步时间 ...");
-	configTime(GMT_OFFSET_SEC, 0, ntpServers[0]); //, ntpServers[1], ntpServers[2]
+	configTime(GMT_OFFSET_SEC, 0, sntpServers[0]); //, sntpServers[1], sntpServers[2]
 	while (!getLocalTime(&timeinfo)) {
 		vTaskDelay(700 / portTICK_PERIOD_MS);
 		Serial.print(".");
@@ -310,6 +325,8 @@ void my_loop(void *param) {
 			// 收到结束标志
 			Serial.print("语音识别完毕：");
 			Serial.println(stttext);
+
+			stt_is_done = true;
 		}
   	});
 
@@ -365,7 +382,7 @@ void my_loop(void *param) {
 				lvgl_mutex_unlock(); // 解锁
 			}
 
-			vTaskDelay(800 / portTICK_PERIOD_MS);
+			vTaskDelay(700 / portTICK_PERIOD_MS);
 
 			ta_set_text(user_prompt.c_str());
 		} else if (proc_key == "&3") {
@@ -377,11 +394,26 @@ void my_loop(void *param) {
 				lvgl_mutex_unlock(); // 解锁
 			}
 
-			vTaskDelay(800 / portTICK_PERIOD_MS);
+			vTaskDelay(700 / portTICK_PERIOD_MS);
 
 			ta_set_text(user_prompt.c_str());
+		} else if (proc_key.length() >= 3 && proc_key.startsWith("$S") && proc_key[2]-'0' >= 0 && proc_key[2]-'0' <= MAX_CHAT_WINDOW) {
+			if (lvgl_mux_lock()) { // 上锁
+				chat_windows[chat_window_select].ta_text = lv_textarea_get_text(g_ta);
+				chat_windows[chat_window_select].main_label_text = lv_label_get_text(main_label);
+				
+				lv_textarea_set_text(g_ta, (String("当前对话窗口: ") + (uint16_t)(chat_window_select+1) + " -> " + (uint16_t)(proc_key[2]-'0')).c_str());
+				lvgl_mutex_unlock(); // 解锁
+
+				chat_window_select = proc_key[2] - '0' - 1;
+				main_label_set_text(chat_windows[chat_window_select].main_label_text.c_str());
+			}
+
+			vTaskDelay(700 / portTICK_PERIOD_MS);
+			
+			ta_set_text(chat_windows[chat_window_select].ta_text.c_str());
 		} else if (proc_key == "$1") {
-			ta_add_text("用");
+			ta_add_text(TEXT_SHORTCUT[0]);
 		} else if (proc_key == "$2") {
 			ta_add_text("控制");
 		} else if (proc_key == "$3") {
@@ -403,9 +435,7 @@ void my_loop(void *param) {
 		} else if (proc_key == "$11") {
 			ta_set_text("");
 		} else if (proc_key == "&1") {
-			vTaskDelay(800 / portTICK_PERIOD_MS);
-
-			String tmp = "";
+			String tmp = ""; // 保存当前文本, 用于后续恢复 (当前文本长度不定，所以不能用 char* 存储)
 			if (lvgl_mux_lock()) { // 上锁
 				tmp = lv_label_get_text(main_label);
 				lvgl_mutex_unlock(); // 解锁
@@ -432,7 +462,7 @@ void my_loop(void *param) {
 				memcpy(pcm_data + recordingSize, audioData, bytes_read);
 				recordingSize += bytes_read / 2;
 
-				if (millis() - start_time > 240) {
+				if (millis() - start_time > 240) { // 每 240ms 检查一次是否松开录音按钮（按键发送间隔是 240ms）
 					start_time = millis();
 					if (!Serial1.available()) break;
 					while (Serial1.available()) char t = Serial1.read();
@@ -444,12 +474,21 @@ void my_loop(void *param) {
 			main_label_set_text("STT 识别中");
 			STTsend();   // STT请求开始
 			free(pcm_data);
-			lv_textarea_add_text(g_ta, stttext.c_str());
-			main_label_set_text("STT 识别完成: |");
-			main_label_add_text(stttext);
-			main_label_add_text("|");
+			
+			while (!stt_is_done) {
+				client.poll(); // 处理接收的消息
+				vTaskDelay(2 / portTICK_PERIOD_MS);
+			}
+			stt_is_done = false;
+			
+			if (lvgl_mux_lock()) { // 上锁
+				lv_textarea_add_text(g_ta, stttext.c_str());
+				lvgl_mutex_unlock(); // 解锁
+			}
+			// main_label_set_text("STT 识别完成: ");
+			// main_label_add_text(stttext);
+			// vTaskDelay(800 / portTICK_PERIOD_MS);
 
-			vTaskDelay(800 / portTICK_PERIOD_MS);
 			main_label_set_text(tmp);
 		} else {
 			// send_key_to_ta(proc_key[0]);
@@ -462,9 +501,9 @@ void my_loop(void *param) {
 
 		// 	Serial.println("Wait for recording");
 		// }
-		if (client.available()) {
-			client.poll(); // 处理接收的消息
-		}
+
+		client.poll(); // 处理接收的消息
+		
 // 		vTaskDelay(1 / portTICK_PERIOD_MS);
 	}
 }
@@ -645,14 +684,22 @@ void print_heap_free() {
  */
 void addMessageToHistory(const char* role, const String content) {
     // 如果历史记录已满，则移除最早的一条用户和助手消息
-    if (messageCount >= (MAX_MESSAGES * 2 + 1)) {
-        for (int i = 1; i < messageCount - 2; i++) {
-        chatHistory[i] = chatHistory[i + 2];
-        }
-        messageCount -= 2;
+    if (chat_windows[chat_window_select].chatHistory.size() >= (MAX_MESSAGES * 2 + 1)) {
+        // for (int i = 1; i < messageCount - 2; i++) {
+		// 	chat_windows[chat_window_select].chatHistory[i] = chat_windows[chat_window_select].chatHistory[i + 2];
+		// }
+		chat_windows[chat_window_select].chatHistory.erase(
+			chat_windows[chat_window_select].chatHistory.begin()+1,
+			chat_windows[chat_window_select].chatHistory.begin()+2
+		);
+        // messageCount -= 2;
     }
     // 将消息以JSON字符串的形式存入数组
-    chatHistory[messageCount++] = String("{\"role\":\"") + role + "\",\"content\":\"" + content + "\"}";
+    // chat_windows[chat_window_select].chatHistory[messageCount++] = String("{\"role\":\"") + role + "\",\"content\":\"" + content + "\"}";
+    chat_windows[chat_window_select].chatHistory.push_back(
+		String("{\"role\":\"") + role + "\",\"content\":\"" + content + "\"}"
+	);
+    // messageCount++;
 }
 
 /**
@@ -693,7 +740,7 @@ int8_t getQwenAnswer(const String _SYSTEM_PROMPT, const String _userPrompt, Stri
 
 	if (useHistory) {
 		// 如果是第一次对话，先加入系统提示词
-		if (messageCount == 0) {
+		if (chat_windows[chat_window_select].chatHistory.empty()) {
 			addMessageToHistory("system", _SYSTEM_PROMPT);
 		}
 		
@@ -701,9 +748,10 @@ int8_t getQwenAnswer(const String _SYSTEM_PROMPT, const String _userPrompt, Stri
 		addMessageToHistory("user", _userPrompt);
 
 		// 将历史记录中的每一条消息解析并添加到JSON数组中
-		for (int i = 0; i < messageCount; i++) {
+		// for (int i = 0; i < messageCount; i++) {
+		for (String tmp : chat_windows[chat_window_select].chatHistory) {
 			JsonDocument msgDoc;
-			DeserializationError error = deserializeJson(msgDoc, chatHistory[i]);
+			DeserializationError error = deserializeJson(msgDoc, tmp);
 			if (!error) doc["input"]["messages"].add(msgDoc.as<JsonObject>());
 		}
 	} else {
@@ -774,8 +822,9 @@ int8_t getQwenAnswer(const String _SYSTEM_PROMPT, const String _userPrompt, Stri
 
 // 重置对话历史
 void reset_chat_history() {
-    messageCount = 0;
-    memset(chatHistory, 0, sizeof(chatHistory));
+    // messageCount = 0;
+    // memset(chat_windows[chat_window_select].chatHistory, 0, sizeof(chatHistory));
+    chat_windows[chat_window_select].chatHistory.clear();
 }
 
 // 修改 main_label 的文本
@@ -1203,7 +1252,7 @@ void STTsend() {
 				client.send(input);
 			}
 		}
-		vTaskDelay(20 / portTICK_PERIOD_MS);
+		vTaskDelay(1 / portTICK_PERIOD_MS);
 	}
 }
 
