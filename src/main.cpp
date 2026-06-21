@@ -61,15 +61,14 @@ const char* sntpServers[] = {  // 实际只使用 第1个
 #define TEXT_SHORTCUT_SIZE 9
 const char* TEXT_SHORTCUT[TEXT_SHORTCUT_SIZE] = {"用", "控制", "是", "什么", "如何", "有", "中", "的", "详细说一下"};
 
-int16_t audioData[2560];
-int16_t *pcm_data; // 录音缓存区
-uint recordingSize = 0;
-
-using namespace websockets;
-WebsocketsClient client;
-
-String stttext = "";
-bool stt_is_done = false;
+// Qwen-ASR 相关变量
+uint16_t *pcm_data;                // 录音缓存区
+websockets::WebsocketsClient client;
+String stt_text = "";   // 最终识别结果文本
+bool stt_idle = 1;      // 是否空闲
+String tmp_output;      // 临时文本输出
+JsonDocument tmp_doc;   // 临时 JSON 对象
+int eventIdCounter = 0; // 事件ID计数器
 
 bool transferring_key = 0;     // 开始接收新的键 (有的键是多字母的)
 bool skip_wifi = 0;            // 是否跳过WiFi连接
@@ -304,32 +303,95 @@ void my_loop(void *param) {
 	// 初始化 I2S
 	setupI2S();
 
-	// 当接受到消息时 调用回调函数
-	client.onMessage([&](WebsocketsMessage message) {
-		// STT ws连接的回调函数
-		Serial.print("Got Message: ");
-		Serial.println(message.data());
-		JsonDocument doc;
-		DeserializationError error = deserializeJson(doc, message.data());
+	// WebSocket消息回调
+	client.onMessage([&](websockets::WebsocketsMessage message) {
+		// Serial.print("[Received] ");
+		// Serial.println(message.data());
+		
+		tmp_doc.clear();
+		DeserializationError error = deserializeJson(tmp_doc, message.data());
 		if (error) {
-			Serial.print(F("deserializeJson() failed: "));
+			Serial.print("JSON parse failed: ");
 			Serial.println(error.f_str());
+			main_label_add_text("JSON parse failed: " + String(error.f_str()));
 			return;
 		}
-		JsonArray ws = doc["data"]["result"]["ws"];
-		for (JsonObject word : ws) {
-			int bg = word["bg"];
-			const char *w = word["cw"][0]["w"];
-			stttext += w;
+		
+		const char* eventType = tmp_doc["type"];
+		
+		// 处理不同的事件类型
+		if (strcmp(eventType, "session.created") == 0) {
+			Serial.println("[事件 Event] session.created");
+			// main_label_add_text("[事件 Event] session.created\n");
 		}
-		if (doc["data"]["status"] == 2) {
-			// 收到结束标志
-			Serial.print("语音识别完毕：");
-			Serial.println(stttext);
+		else if (strcmp(eventType, "session.updated") == 0) {
+			Serial.println("[事件 Event] session.updated");
+			// main_label_add_text("[事件 Event] session.updated\n");
+		}
+		else if (strcmp(eventType, "input_audio_buffer.speech_started") == 0) {
+			Serial.println("[事件 Event] Speech started detected (VAD)");
+			// main_label_add_text("[事件 Event] Speech started detected (VAD)\n");
+		}
+		else if (strcmp(eventType, "input_audio_buffer.speech_stopped") == 0) {
+			Serial.println("[事件 Event] Speech stopped detected (VAD)");
+			// main_label_add_text("[事件 Event] Speech stopped detected (VAD)\n");
+		}
+		else if (strcmp(eventType, "conversation.item.input_audio_transcription.text") == 0) {
+			// 实时识别结果
+			String fullText = tmp_doc["text"].as<String>() + tmp_doc["stash"].as<String>();
+			Serial.print("[实时识别 Realtime] ");
+			Serial.println(fullText);
+			// main_label_add_text("[实时识别 Realtime] " + fullText + "\n");
+		}
+		else if (strcmp(eventType, "conversation.item.input_audio_transcription.completed") == 0) {
+			// 最终识别结果
+			stt_text = tmp_doc["transcript"].as<String>();
+			stt_idle = 1;
+			Serial.print("语音识别结果：");
+			Serial.println(stt_text);
+			// main_label_add_text("语音识别结果：" + stt_text + "\n");
+		}
+		else if (strcmp(eventType, "session.finished") == 0) {
+			// 会话结束
+			Serial.println("[事件 Event] session.finished\n");
+			// main_label_add_text("[事件 Event] session.finished\n");
+		}
+		else if (strcmp(eventType, "error") == 0) {
+			// 错误处理
+			Serial.print("[错误 Error] ");
+			if (tmp_doc["error"]["message"]) {
+				Serial.println(tmp_doc["error"]["message"].as<String>());
+				// main_label_add_text("[错误 Error] " + tmp_doc["error"]["message"].as<String>());
+			}
+		}
+	});
 
-			stt_is_done = true;
-		}
-  	});
+	// // 当接受到消息时 调用回调函数
+	// client.onMessage([&](WebsocketsMessage message) {
+	// 	// STT ws连接的回调函数
+	// 	Serial.print("Got Message: ");
+	// 	Serial.println(message.data());
+	// 	JsonDocument doc;
+	// 	DeserializationError error = deserializeJson(doc, message.data());
+	// 	if (error) {
+	// 		Serial.print(F("deserializeJson() failed: "));
+	// 		Serial.println(error.f_str());
+	// 		return;
+	// 	}
+	// 	JsonArray ws = doc["data"]["result"]["ws"];
+	// 	for (JsonObject word : ws) {
+	// 		int bg = word["bg"];
+	// 		const char *w = word["cw"][0]["w"];
+	// 		stttext += w;
+	// 	}
+	// 	if (doc["data"]["status"] == 2) {
+	// 		// 收到结束标志
+	// 		Serial.print("语音识别完毕：");
+	// 		Serial.println(stttext);
+
+	// 		stt_is_done = true;
+	// 	}
+  	// });
 
 	if (lvgl_mux_lock()) { // 上锁
 		lv_textarea_set_placeholder_text(g_ta, "请输入");
@@ -423,31 +485,37 @@ void my_loop(void *param) {
 		} else if (proc_key == "$11") {
 			ta_set_text("");
 		} else if (proc_key == "&1") {
+			if (!stt_idle) continue;
+
 			String tmp = ""; // 保存当前文本, 用于后续恢复 (当前文本长度不定，所以不能用 char* 存储)
 			if (lvgl_mux_lock()) { // 上锁
 				tmp = lv_label_get_text(main_label);
 				lvgl_mutex_unlock(); // 解锁
 			}
 
-			stttext = "";
-			Serial.print("录音中 ...");
-			main_label_set_text("录音中 ...");
+			Serial.print("录音中 ... ");
+			main_label_set_text("录音中 ... ");
 
+			// 重置状态
+			stt_text = "";
+			stt_idle = 0;
+			eventIdCounter = 0;
 			size_t bytes_read = 0;
-			recordingSize = 0;
+			uint32_t recordingSize = 0;
+			
 			// 分配 pcm_data
-			pcm_data = (int16_t *)ps_malloc(BUFFER_SIZE * sizeof(int16_t));
+			pcm_data = (uint16_t *)ps_malloc(BUFFER_SIZE * sizeof(uint16_t));
 			if (!pcm_data) {
-				Serial.println(" 无法从PSRAM分配内存");
-				main_label_set_text(" 无法从PSRAM分配内存");
+				Serial.println("Failed to allocate memory for pcm_data from PSRAM");
+				main_label_add_text("Failed to allocate memory for pcm_data from PSRAM");
 				return;
 			}
-
+			
 			uint32_t start_time = millis();
+			// 开始循环录音
 			while (recordingSize < MAX_RECORD_TIME_SECONDS * SAMPLE_RATE) {
-				// 开始循环录音，将录制结果保存在pcm_data中
-				esp_err_t result = i2s_read(I2S_PORT, audioData, sizeof(audioData), &bytes_read, portMAX_DELAY);
-				memcpy(pcm_data + recordingSize, audioData, bytes_read);
+				esp_err_t err = i2s_read(I2S_PORT, pcm_data + recordingSize, CHUNK_SIZE * sizeof(uint16_t), &bytes_read, portMAX_DELAY);
+				if (err != ESP_OK) continue;
 				recordingSize += bytes_read / 2;
 
 				if (millis() - start_time > 240) { // 每 240ms 检查一次是否松开录音按钮（按键发送间隔是 240ms）
@@ -455,27 +523,29 @@ void my_loop(void *param) {
 					if (!Serial1.available()) break;
 					while (Serial1.available()) char t = Serial1.read();
 				}
-			} 
-			// Serial.printf("Total bytes read: %d\r\n", recordingSize);
-			Serial.println(" OK");
-
-			main_label_set_text("STT 识别中");
-			STTsend();   // STT请求开始
+			}
+			
+			Serial.println("OK");
+			
+			main_label_set_text("ASR 识别中");
+			// 发送音频到Qwen-ASR进行识别
+			asr_send(pcm_data, recordingSize);
+			
+			// 释放内存
 			free(pcm_data);
 			
-			while (!stt_is_done) {
+			while (!stt_idle) {
 				client.poll(); // 处理接收的消息
 				vTaskDelay(2 / portTICK_PERIOD_MS);
 			}
-			stt_is_done = false;
+			stt_idle = 1;
 			
 			if (lvgl_mux_lock()) { // 上锁
-				lv_textarea_add_text(g_ta, stttext.c_str());
+				lv_textarea_add_text(g_ta, stt_text.c_str());
 				lvgl_mutex_unlock(); // 解锁
 			}
 			// main_label_set_text("STT 识别完成: ");
-			// main_label_add_text(stttext);
-			// vTaskDelay(800 / portTICK_PERIOD_MS);
+			// main_label_add_text(stt_text);
 
 			main_label_set_text(tmp);
 		} else {
@@ -1124,129 +1194,253 @@ void setupI2S() {
 	Serial.println("OK!");
 }
 
-// 构造讯飞ws连接url
-String make_XF_WSurl(const char *Secret, const char *Key, String request, String host) {
-	// 获取当前时间
-	char buffer[80];
-	if(!getLocalTime(&timeinfo)){
-		Serial.println("获取时间失败");
-		return "GMT";
-	}
-	strftime(buffer, sizeof(buffer), "%a, %d %b %Y %H:%M:%S GMT", &timeinfo);
-	String timeString = buffer;
+// 向 Qwen-ASR 发送音频数据
+void asr_send(uint16_t* pcm_data, uint32_t size) {
+	Serial.print("[发送 Send] 连接服务器中 ... ");
+	main_label_set_text("[发送 Send] 连接服务器中 ... ");
+	
+	// 添加 Authorization 和 OpenAI-Beta 请求头
+	client.addHeader("Authorization", "Bearer " apiKey);
+	client.addHeader("OpenAI-Beta", "realtime=v1");
+	
+	// 如果需要，可以设置CA证书
+	client.setCACert(nullptr);
+	client.setCertificate(nullptr);
+	client.setPrivateKey(nullptr);
 
-	// 构造原字符串
-	String signature_origin = "host: " + host;
-	signature_origin += "\n";
-	signature_origin += "date: ";
-	signature_origin += timeString;
-	signature_origin += "\n";
-	signature_origin += "GET " + request + " HTTP/1.1";
-	
-	// 使用 mbedtls 计算 HMAC-SHA256
-	unsigned char hmacResult[32]; // SHA256 产生的哈希结果长度为 32 字节
-	mbedtls_md_context_t ctx;
-	mbedtls_md_type_t md_type = MBEDTLS_MD_SHA256;
-	mbedtls_md_init(&ctx);
-	mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(md_type), 1); // 1 表示 HMAC
-	mbedtls_md_hmac_starts(&ctx, (const unsigned char *)Secret, strlen(Secret));
-	mbedtls_md_hmac_update(&ctx, (const unsigned char *)signature_origin.c_str(), signature_origin.length());
-	mbedtls_md_hmac_finish(&ctx, hmacResult);
-	mbedtls_md_free(&ctx);
-	// 对结果进行 Base64 编码
-	String base64Result = base64::encode(hmacResult, 32);
-	
-	String authorization_origin = "api_key=\"";
-	authorization_origin += Key;
-	authorization_origin += "\", algorithm=\"hmac-sha256\", headers=\"host date request-line\", signature=\"";
-	authorization_origin += base64Result;
-	authorization_origin += "\"";
-	String authorization = base64::encode(authorization_origin);
-	
-	String url = "ws://" + host + request;
-	url += "?authorization=";
-	url += authorization;
-	url += "&date=";
-
-	// 替换空格为 "+"
-	timeString.replace(" ", "+");
-	timeString.replace(",", "%2C");
-	timeString.replace(":", "%3A");
-	url += timeString;
-	
-	url += "&host=" + host;
-	return url;
-}
- 
-// 向讯飞STT发送音频数据
-void STTsend() {
-	uint8_t status = 0;
-	int dataSize = 1280 * 8;
-	int audioDataSize = recordingSize * 2;
-	uint lan = (audioDataSize) / dataSize;
-	uint lan_end = (audioDataSize) % dataSize;
-	if (lan_end > 0) {
-		lan++;
-	}
-	
-	String host_url = make_XF_WSurl(STTAPISecret, STTAPIKey, "/v2/iat", "ws-api.xfyun.cn");
-	Serial.print("连接服务器中 ... ");
-	main_label_set_text("连接服务器中 ... ");
-	bool connected = client.connect(host_url);
+	// 连接 WebSocket
+	bool connected = client.connect(QWEN_ASR_BASE_URL "?model=" QWEN_ASR_MODEL);
 	if (connected) {
 		Serial.println("OK");
-		main_label_add_text("OK");
+		main_label_add_text("OK\n");
 	} else {
-		Serial.println("失败!");
-		main_label_add_text("失败");
+		Serial.println("失败");
+		main_label_add_text("失败\n");
 		return;
 	}
-	// 分段向STT发送PCM音频数据
-	for (int i = 0; i < lan; i++) { 
-		if (i == (lan - 1)) {
-			status = 2;
-		}
-		if (status == 0) {
-			String input = "{";
-			input += "\"common\":{ \"app_id\":\"" STTAPPID "\" },";
-			input += "\"business\":{\"domain\": \"iat\", \"language\": \"zh_cn\", \"accent\": \"mandarin\", \"vinfo\":1,\"vad_eos\":10000},";
-			input += "\"data\":{\"status\": 0, \"format\": \"audio/L16;rate=16000\",\"encoding\": \"raw\",\"audio\":\"";
-			String base64audioString = base64::encode((uint8_t *)pcm_data, dataSize);
-			input += base64audioString;
-			input += "\"}}";
-			client.send(input);
-			status = 1;
-		}
-		else if (status == 1) {
-			String input = "{";
-			input += "\"data\":{\"status\": 1, \"format\": \"audio/L16;rate=16000\",\"encoding\": \"raw\",\"audio\":\"";
-			String base64audioString = base64::encode((uint8_t *)pcm_data + (i * dataSize), dataSize);
-			input += base64audioString;
-			input += "\"}}";
-			client.send(input);
-		}
-		else if (status == 2) {
-			if (lan_end == 0) {
-				String input = "{";
-				input += "\"data\":{\"status\": 2, \"format\": \"audio/L16;rate=16000\",\"encoding\": \"raw\",\"audio\":\"";
-				String base64audioString = base64::encode((uint8_t *)pcm_data + (i * dataSize), dataSize);
-				input += base64audioString;
-				input += "\"}}";
-				client.send(input);
-			}
-			if (lan_end > 0) {
-				String input = "{";
-				input += "\"data\":{\"status\": 2, \"format\": \"audio/L16;rate=16000\",\"encoding\": \"raw\",\"audio\":\"";
-				String base64audioString = base64::encode((uint8_t *)pcm_data + (i * dataSize), lan_end);
-				input += base64audioString;
-				input += "\"}}";
-				client.send(input);
-			}
-		}
-		main_label_set_text("发送中 ... [" + String(i) + " / " + String(lan) + "]");
-		vTaskDelay(1 / portTICK_PERIOD_MS);
+	
+	// 等待session.created事件（在回调中处理）
+	vTaskDelay(15 / portTICK_PERIOD_MS);
+
+	// 发送session.update配置
+	tmp_doc.clear();
+	tmp_doc["event_id"] = eventIdCounter++;
+	tmp_doc["type"] = "session.update";
+	
+	JsonObject session = tmp_doc["session"].to<JsonObject>();
+	JsonArray modalities = session["modalities"].to<JsonArray>();
+	modalities.add("text");
+	session["input_audio_format"] = "pcm";
+	session["sample_rate"] = SAMPLE_RATE;
+	
+	JsonObject transcription = session["input_audio_transcription"].to<JsonObject>();
+	transcription["language"] = "zh";
+	
+	if (ENABLE_SERVER_VAD) {
+		// VAD模式：服务端自动检测语音起止
+		JsonObject turnDetection = session["turn_detection"].to<JsonObject>();
+		turnDetection["type"] = "server_vad";
+		turnDetection["threshold"] = 0.0;
+		turnDetection["silence_duration_ms"] = 400;
+	} else {
+		// Manual模式：客户端控制断句
+		session["turn_detection"] = nullptr;
 	}
+	
+	serializeJson(tmp_doc, tmp_output);
+	
+	Serial.println("[发送 Send] session.update");
+	main_label_add_text("[发送 Send] session.update\n");
+	client.send(tmp_output);
+	
+	vTaskDelay(15 / portTICK_PERIOD_MS);
+	
+	// 分段发送音频数据
+	int audioDataSize = size * 2;  // 16bit = 2 bytes per sample
+	uint32_t totalChunks = (audioDataSize + CHUNK_SIZE - 1) / CHUNK_SIZE;
+	size_t offset = 0;
+	for (uint32_t i = 0; i < totalChunks; i++) {
+		size_t chunkSize = CHUNK_SIZE;
+		if (offset + chunkSize > audioDataSize) {
+			chunkSize = audioDataSize - offset;
+		}
+		
+		// 发送音频数据块
+		tmp_doc.clear();
+		tmp_doc["event_id"] = eventIdCounter++;
+		tmp_doc["type"] = "input_audio_buffer.append";
+		
+		// Base64编码音频数据
+		String base64Audio = base64::encode((uint8_t*)pcm_data + offset, chunkSize);
+		tmp_doc["audio"] = base64Audio;
+		
+		serializeJson(tmp_doc, tmp_output);
+		
+		Serial.println("[发送 Send] input_audio_buffer.append [" + String(i) + " / " + String(totalChunks) + "]");
+		main_label_set_text("[发送 Send] input_audio_buffer.append [" + String(i) + " / " + String(totalChunks) + "]");
+		client.send(tmp_output);
+
+		offset += chunkSize;
+		
+		// vTaskDelay(1 / portTICK_PERIOD_MS);
+	}
+	
+	// 如果是Manual模式，需要发送commit事件
+	if (!ENABLE_SERVER_VAD) {
+		vTaskDelay(20 / portTICK_PERIOD_MS);
+		tmp_doc.clear();
+		tmp_doc["event_id"] = eventIdCounter++;
+		tmp_doc["type"] = "input_audio_buffer.commit";
+		
+		serializeJson(tmp_doc, tmp_output);
+		
+		Serial.println("[发送 Send] input_audio_buffer.commit");
+		main_label_set_text("[发送 Send] input_audio_buffer.commit\n");
+		client.send(tmp_output);
+	}
+	
+	// 发送session.finish结束会话
+	vTaskDelay(10 / portTICK_PERIOD_MS);
+	
+	tmp_doc.clear();
+	tmp_doc["event_id"] = eventIdCounter++;
+	tmp_doc["type"] = "session.finish";
+	
+	serializeJson(tmp_doc, tmp_output);
+	
+	Serial.println("[发送 Send] session.finish");
+	main_label_add_text("[发送 Send] session.finish\n");
+	client.send(tmp_output);
+	
+	// 等待最终结果（在回调中处理session.finished事件）
+	Serial.println("[发送 Send] 等待最终结果");
+	main_label_add_text("[发送 Send] 等待最终结果\n");
 }
+
+
+// // 构造讯飞ws连接url
+// String make_XF_WSurl(const char *Secret, const char *Key, String request, String host) {
+// 	// 获取当前时间
+// 	char buffer[80];
+// 	if(!getLocalTime(&timeinfo)){
+// 		Serial.println("获取时间失败");
+// 		return "GMT";
+// 	}
+// 	strftime(buffer, sizeof(buffer), "%a, %d %b %Y %H:%M:%S GMT", &timeinfo);
+// 	String timeString = buffer;
+
+// 	// 构造原字符串
+// 	String signature_origin = "host: " + host;
+// 	signature_origin += "\n";
+// 	signature_origin += "date: ";
+// 	signature_origin += timeString;
+// 	signature_origin += "\n";
+// 	signature_origin += "GET " + request + " HTTP/1.1";
+	
+// 	// 使用 mbedtls 计算 HMAC-SHA256
+// 	unsigned char hmacResult[32]; // SHA256 产生的哈希结果长度为 32 字节
+// 	mbedtls_md_context_t ctx;
+// 	mbedtls_md_type_t md_type = MBEDTLS_MD_SHA256;
+// 	mbedtls_md_init(&ctx);
+// 	mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(md_type), 1); // 1 表示 HMAC
+// 	mbedtls_md_hmac_starts(&ctx, (const unsigned char *)Secret, strlen(Secret));
+// 	mbedtls_md_hmac_update(&ctx, (const unsigned char *)signature_origin.c_str(), signature_origin.length());
+// 	mbedtls_md_hmac_finish(&ctx, hmacResult);
+// 	mbedtls_md_free(&ctx);
+// 	// 对结果进行 Base64 编码
+// 	String base64Result = base64::encode(hmacResult, 32);
+	
+// 	String authorization_origin = "api_key=\"";
+// 	authorization_origin += Key;
+// 	authorization_origin += "\", algorithm=\"hmac-sha256\", headers=\"host date request-line\", signature=\"";
+// 	authorization_origin += base64Result;
+// 	authorization_origin += "\"";
+// 	String authorization = base64::encode(authorization_origin);
+	
+// 	String url = "ws://" + host + request;
+// 	url += "?authorization=";
+// 	url += authorization;
+// 	url += "&date=";
+
+// 	// 替换空格为 "+"
+// 	timeString.replace(" ", "+");
+// 	timeString.replace(",", "%2C");
+// 	timeString.replace(":", "%3A");
+// 	url += timeString;
+	
+// 	url += "&host=" + host;
+// 	return url;
+// }
+ 
+// // 向讯飞STT发送音频数据
+// void STTsend() {
+// 	uint8_t status = 0;
+// 	int dataSize = 1280 * 8;
+// 	int audioDataSize = recordingSize * 2;
+// 	uint lan = (audioDataSize) / dataSize;
+// 	uint lan_end = (audioDataSize) % dataSize;
+// 	if (lan_end > 0) {
+// 		lan++;
+// 	}
+	
+// 	String host_url = make_XF_WSurl(STTAPISecret, STTAPIKey, "/v2/iat", "ws-api.xfyun.cn");
+// 	Serial.print("连接服务器中 ... ");
+// 	main_label_set_text("连接服务器中 ... ");
+// 	bool connected = client.connect(host_url);
+// 	if (connected) {
+// 		Serial.println("OK");
+// 		main_label_add_text("OK");
+// 	} else {
+// 		Serial.println("失败!");
+// 		main_label_add_text("失败");
+// 		return;
+// 	}
+// 	// 分段向STT发送PCM音频数据
+// 	for (int i = 0; i < lan; i++) { 
+// 		if (i == (lan - 1)) {
+// 			status = 2;
+// 		}
+// 		if (status == 0) {
+// 			String input = "{";
+// 			input += "\"common\":{ \"app_id\":\"" STTAPPID "\" },";
+// 			input += "\"business\":{\"domain\": \"iat\", \"language\": \"zh_cn\", \"accent\": \"mandarin\", \"vinfo\":1,\"vad_eos\":10000},";
+// 			input += "\"data\":{\"status\": 0, \"format\": \"audio/L16;rate=16000\",\"encoding\": \"raw\",\"audio\":\"";
+// 			String base64audioString = base64::encode((uint8_t *)pcm_data, dataSize);
+// 			input += base64audioString;
+// 			input += "\"}}";
+// 			client.send(input);
+// 			status = 1;
+// 		}
+// 		else if (status == 1) {
+// 			String input = "{";
+// 			input += "\"data\":{\"status\": 1, \"format\": \"audio/L16;rate=16000\",\"encoding\": \"raw\",\"audio\":\"";
+// 			String base64audioString = base64::encode((uint8_t *)pcm_data + (i * dataSize), dataSize);
+// 			input += base64audioString;
+// 			input += "\"}}";
+// 			client.send(input);
+// 		}
+// 		else if (status == 2) {
+// 			if (lan_end == 0) {
+// 				String input = "{";
+// 				input += "\"data\":{\"status\": 2, \"format\": \"audio/L16;rate=16000\",\"encoding\": \"raw\",\"audio\":\"";
+// 				String base64audioString = base64::encode((uint8_t *)pcm_data + (i * dataSize), dataSize);
+// 				input += base64audioString;
+// 				input += "\"}}";
+// 				client.send(input);
+// 			}
+// 			if (lan_end > 0) {
+// 				String input = "{";
+// 				input += "\"data\":{\"status\": 2, \"format\": \"audio/L16;rate=16000\",\"encoding\": \"raw\",\"audio\":\"";
+// 				String base64audioString = base64::encode((uint8_t *)pcm_data + (i * dataSize), lan_end);
+// 				input += base64audioString;
+// 				input += "\"}}";
+// 				client.send(input);
+// 			}
+// 		}
+// 		main_label_set_text("发送中 ... [" + String(i) + " / " + String(lan) + "]");
+// 		vTaskDelay(1 / portTICK_PERIOD_MS);
+// 	}
+// }
 
 // 0x00197fff
 

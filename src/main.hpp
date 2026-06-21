@@ -32,7 +32,7 @@
 // I2S 相关
 #include <base64.h>
 #include <driver/i2s.h>
-#include <mbedtls/md.h>
+// #include <mbedtls/md.h>
 #include <ArduinoWebsockets.h>
 
 // ###################### API #########################
@@ -87,6 +87,14 @@
 // 模型名称
 #define MAIN_MODEL_NAME "qwen-plus"   // 主模型
 #define PROC_MODEL_NAME "qwen-plus"   // 拼音预处理 模型
+
+// ===== Qwen-ASR 配置 =====
+#define QWEN_ASR_MODEL "qwen3-asr-flash-realtime"
+// 北京地域 baseUrl
+#define QWEN_ASR_BASE_URL "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
+
+// VAD模式设置: true=VAD模式（服务端自动断句），false=Manual模式（客户端控制断句）
+#define ENABLE_SERVER_VAD false
 
 // ############################## 提示词 #################################
 #define USE_COLOR_ANSWER 0 // 是否使用颜色回答
@@ -202,5 +210,8 @@ void init_SDcard();
 
 // 列出 SD卡目录 及 文件
 void listDir(fs::FS &fs, const char *dirname, uint8_t levels);
+
+// 向 Qwen-ASR 发送音频数据
+void asr_send(uint16_t* pcm_data, uint32_t size);
 
 // 0x0018afff
