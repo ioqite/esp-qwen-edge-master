@@ -418,22 +418,6 @@ void my_loop(void *param) {
 			ta_set_text(chat_windows[chat_window_select].ta_text.c_str());
 		} else if (proc_key.length() >= 2 && proc_key.startsWith("$") && proc_key.substring(1).toInt() > 0 && proc_key.substring(1).toInt() <= TEXT_SHORTCUT_SIZE) {
 			ta_add_text(TEXT_SHORTCUT[ proc_key.substring(1).toInt() - 1 ]);
-		// } else if (proc_key == "$2") {
-		// 	ta_add_text("控制");
-		// } else if (proc_key == "$3") {
-		// 	ta_add_text("是");
-		// } else if (proc_key == "$4") {
-		// 	ta_add_text("什么");
-		// } else if (proc_key == "$5") {
-		// 	ta_add_text("如何");
-		// } else if (proc_key == "$6") {
-		// 	ta_add_text("有");
-		// } else if (proc_key == "$7") {
-		// 	ta_add_text("中");
-		// } else if (proc_key == "$8") {
-		// 	ta_add_text("的");
-		// } else if (proc_key == "$9") {
-		// 	ta_add_text("详细说一下");
 		} else if (proc_key == "$10") {
 			reset_chat_history();
 		} else if (proc_key == "$11") {
@@ -1206,12 +1190,15 @@ void STTsend() {
 	}
 	
 	String host_url = make_XF_WSurl(STTAPISecret, STTAPIKey, "/v2/iat", "ws-api.xfyun.cn");
-	Serial.print("Connecting to server ... ");
+	Serial.print("连接服务器中 ... ");
+	main_label_set_text("连接服务器中 ... ");
 	bool connected = client.connect(host_url);
 	if (connected) {
 		Serial.println("OK");
+		main_label_add_text("OK");
 	} else {
-		Serial.println("Not Connected!");
+		Serial.println("失败!");
+		main_label_add_text("失败");
 		return;
 	}
 	// 分段向STT发送PCM音频数据
@@ -1256,6 +1243,7 @@ void STTsend() {
 				client.send(input);
 			}
 		}
+		main_label_set_text("发送中 ... [" + String(i) + " / " + String(lan) + "]");
 		vTaskDelay(1 / portTICK_PERIOD_MS);
 	}
 }
