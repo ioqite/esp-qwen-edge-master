@@ -92,10 +92,9 @@
 #define QWEN_ASR_MODEL "qwen3-asr-flash-realtime"
 // 北京地域 baseUrl
 #define QWEN_ASR_BASE_URL "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
-
 // VAD模式设置: true=VAD模式（服务端自动断句），false=Manual模式（客户端控制断句）
 #define ENABLE_SERVER_VAD false
-
+#define ASR_LANGUAGE "zh"
 // ############################## 提示词 #################################
 #define USE_COLOR_ANSWER 0 // 是否使用颜色回答
 
