@@ -12,12 +12,13 @@
 
 // ######################## 修改为自己的 讯飞STT API密钥 ################################
 
-// 讯飞STT 的key
+// 讯飞STT 的key (使用 Qwen-ASR 可不配置)
 #define STTAPPID "xxxxxxx"
 #define STTAPISecret "xxxxxxx"
 #define STTAPIKey "xxxxxxx"
 
 // ###################### 修改为自己的 WiFi名称 与 密码 #########################
+// 注意: SSID 数量与密码数量必须一致
 const char* ssids[] = {"", // 索引从1开始, 0留空
 	"your_wifi_1", 
 	"your_wifi_2",

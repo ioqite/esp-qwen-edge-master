@@ -148,12 +148,32 @@ void loop();
 // 获取 剩余RAM
 void print_heap_free();
 
-// 修改 main_label 的文本
-void main_label_add_text(String print_text);
-void main_label_set_text(String print_text);
-// 修改 text_area 的文本
-void ta_set_text(const char* text);
+// ============== 文本输入框ta 操作 ===============
+// 添加文本到 ta 上
 void ta_add_text(const char* text);
+// 设置 ta 上的文本
+void ta_set_text(const char* text);
+// 暂存 ta 上的文本
+void ta_tmp_save();
+// 恢复 ta 上的文本
+void ta_tmp_recover();
+// 在 ta 上临时显示文本
+void ta_tmp_show(const char* text, uint16_t delay_ms);
+
+// ============== main_label 操作 ===============
+// 添加文本到 main_label 上
+void main_label_add_text(const char* text);
+// 设置 main_label 上的文本
+void main_label_set_text(const char* text);
+// 暂存 main_label 上的文本
+void main_label_tmp_save();
+// 恢复 main_label 上的文本
+void main_label_tmp_recover();
+// 在 main_label 上临时显示文本
+void main_label_tmp_show(const char* text, uint16_t delay_ms);
+
+// 检查是否有按键按下
+bool check_key();
 
 // // 鼠标回调
 // void my_input_read(lv_indev_drv_t * drv, lv_indev_data_t*data);
@@ -197,13 +217,13 @@ int8_t getAPIanswer(const char* _SYSTEM_PROMPT, const String& _userPrompt, const
 void reset_chat_history();
 
 
-// ######### 讯飞STT 相关 #########
+// ######### STT / ASR 相关 #########
 
-// 构造讯飞ws连接url
-String make_XF_WSurl(const char *Secret, const char *Key, String request, String host);
+// // 构造讯飞ws连接url
+// String make_XF_WSurl(const char *Secret, const char *Key, String request, String host);
 
-// 向讯飞STT发送音频数据
-void STTsend();
+// // 向讯飞STT发送音频数据
+// void STTsend();
 
 // 初始化 I2S
 void setupI2S();
@@ -220,4 +240,6 @@ void listDir(fs::FS &fs, const char *dirname, uint8_t levels);
 // 向 Qwen-ASR 发送音频数据
 void asr_send(uint16_t* pcm_data, uint32_t size);
 
-// 0x0018afff
+// 选择SSID 并 连接WiFi
+void connect_wifi();
+

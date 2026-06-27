@@ -2,8 +2,6 @@
 
 #include "main.hpp"
 
-int wifi_choose = 0;
-
 TaskHandle_t TASK_Handle_wifi = NULL;
 TaskHandle_t TASK_HandleOne = NULL;
 
@@ -45,17 +43,13 @@ String proc_key;
 lv_obj_t * main_panel;
 lv_obj_t * main_label;
 String main_label_text = "";
-lv_obj_t * g_ta;
+lv_obj_t * ta;
 lv_obj_t * g_kb;
 
 // GMT 时间偏移量 (秒)
 #define GMT_OFFSET_SEC 8 * 3600
 // SNTP 服务器
-const char* sntpServers[] = {  // 实际只使用 第1个
-	"ntp.cnnic.cn",              // CNNIC
-	"ntp.tuna.tsinghua.edu.cn",  // TUNA
-	"ntp.aliyun.com"             // 阿里云
-};
+#define SNTP_SERVER "ntp.cnnic.cn" // CNNIC
 
 // 文本快捷键
 #define TEXT_SHORTCUT_SIZE 9
@@ -70,6 +64,11 @@ String tmp_output;      // 临时文本输出
 JsonDocument tmp_doc;   // 临时 JSON 对象
 int eventIdCounter = 0; // 事件ID计数器
 
+// 临时文本
+const char* ta_tmp_text = "";
+const char* main_label_tmp_text = "";
+
+// 状态变量
 bool transferring_key = 0;     // 开始接收新的键 (有的键是多字母的)
 bool skip_wifi = 0;            // 是否跳过WiFi连接
 bool connecting_wifi = false;  // 是否正在连接WiFi
@@ -146,18 +145,18 @@ void setup() {
 	lv_label_set_text(main_label, "");
 
     // 创建文本框
-    g_ta = lv_textarea_create(lv_scr_act());
-    lv_textarea_set_one_line(g_ta, false);
-    lv_obj_set_style_text_font(g_ta, &cgr_yuyag_w2_ext4, 0);
-    lv_obj_align(g_ta, LV_ALIGN_TOP_LEFT, 5, 3);
-    lv_obj_set_size(g_ta, 310, 46);// w:310
-    lv_obj_add_state(g_ta, LV_STATE_FOCUSED);  /* 默认聚焦 */
+    ta = lv_textarea_create(lv_scr_act());
+    lv_textarea_set_one_line(ta, false);
+    lv_obj_set_style_text_font(ta, &cgr_yuyag_w2_ext4, 0);
+    lv_obj_align(ta, LV_ALIGN_TOP_LEFT, 5, 3);
+    lv_obj_set_size(ta, 310, 46);// w:310
+    lv_obj_add_state(ta, LV_STATE_FOCUSED);  /* 默认聚焦 */
 
     // 创建键盘 (隐藏按键)
 	g_kb = lv_keyboard_create(lv_scr_act());
     lv_obj_add_flag(g_kb, LV_OBJ_FLAG_HIDDEN);  /* 直接隐藏键盘 */
-    lv_keyboard_set_textarea(g_kb, g_ta);
-	lv_obj_add_event_cb(g_ta, ta_event_cb, LV_EVENT_ALL, g_kb);  
+    lv_keyboard_set_textarea(g_kb, ta);
+	lv_obj_add_event_cb(ta, ta_event_cb, LV_EVENT_ALL, g_kb);  
 
 	// 启动 C3 从机
 	// Serial1.write("`");
@@ -203,20 +202,93 @@ void onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
     }
 }
 
-// 更改 文本输入框 文本
+// ============== 文本输入框ta 操作 ===============
+// 添加文本到 ta 上
 void ta_add_text(const char* text) {
 	if (lvgl_mux_lock()) {  // 加锁
-		lv_textarea_add_text(g_ta, text);
+		lv_textarea_add_text(ta, text);
 		lvgl_mutex_unlock();  // 解锁
 	}
 }
+// 设置 ta 上的文本
 void ta_set_text(const char* text) {
 	if (lvgl_mux_lock()) {  // 加锁
-		lv_textarea_set_text(g_ta, text);
+		lv_textarea_set_text(ta, text);
 		lvgl_mutex_unlock();  // 解锁
 	}
 }
+// 暂存 ta 上的文本
+void ta_tmp_save() {
+	if (lvgl_mux_lock()) { // 上锁
+		ta_tmp_text = lv_textarea_get_text(ta);
+		lvgl_mutex_unlock(); // 解锁
+	}
+}
+// 恢复 ta 上的文本
+void ta_tmp_recover() {
+	if (lvgl_mux_lock()) { // 上锁
+		lv_textarea_set_text(ta, ta_tmp_text);
+		lvgl_mutex_unlock(); // 解锁
+	}
+}
+// 在 ta 上临时显示文本
+void ta_tmp_show(const char* text, uint16_t delay_ms = 700) {
+	if (lvgl_mux_lock()) { // 上锁
+		ta_tmp_text = lv_textarea_get_text(ta);
+		lv_textarea_set_text(ta, text);
+		lvgl_mutex_unlock(); // 解锁
+	}
 
+	vTaskDelay(delay_ms / portTICK_PERIOD_MS);
+
+	ta_set_text(ta_tmp_text);
+}
+
+// ============== main_label 操作 ===============
+// 添加文本到 main_label 上
+void main_label_add_text(const char* text) {
+	main_label_text += text;
+	if (lvgl_mux_lock()) { // 上锁
+		lv_label_set_text(main_label, main_label_text.c_str());
+		lvgl_mutex_unlock();
+	}
+}
+// 设置 main_label 上的文本
+void main_label_set_text(const char* text) {
+	main_label_text = text;
+	if (lvgl_mux_lock()) { // 上锁
+		lv_label_set_text(main_label, text);
+		lvgl_mutex_unlock();
+	}
+}
+// 暂存 main_label 上的文本
+void main_label_tmp_save() {
+	if (lvgl_mux_lock()) { // 上锁
+		main_label_tmp_text = lv_label_get_text(main_label);
+		lvgl_mutex_unlock(); // 解锁
+	}
+}
+// 恢复 main_label 上的文本
+void main_label_tmp_recover() {
+	if (lvgl_mux_lock()) { // 上锁
+		lv_label_set_text(main_label, main_label_tmp_text);
+		lvgl_mutex_unlock(); // 解锁
+	}
+}
+// 在 main_label 上临时显示文本
+void main_label_tmp_show(const char* text, uint16_t delay_ms = 700) {
+	if (lvgl_mux_lock()) { // 上锁
+		main_label_tmp_text = lv_label_get_text(main_label);
+		lv_label_set_text(main_label, text);
+		lvgl_mutex_unlock(); // 解锁
+	}
+
+	vTaskDelay(delay_ms / portTICK_PERIOD_MS);
+
+	main_label_set_text(main_label_tmp_text);
+}
+
+// 检查是否有按键按下
 bool check_key() {
 	if (!Serial1.available()) return 0;
 	while (Serial1.available()) Serial1.read();
@@ -242,7 +314,7 @@ void wait_wifi_connection(void *param) {
 	// SNTP 时间同步
 	Serial.print("使用 SNTP 同步时间 ...");
 	main_label_set_text("#10acb1 使用 SNTP 同步时间 ...");
-	configTime(GMT_OFFSET_SEC, 0, sntpServers[0]); //, sntpServers[1], sntpServers[2]
+	configTime(GMT_OFFSET_SEC, 0, SNTP_SERVER);
 	while (!getLocalTime(&timeinfo)) {
 		vTaskDelay(700 / portTICK_PERIOD_MS);
 		Serial.print(".");
@@ -254,57 +326,62 @@ void wait_wifi_connection(void *param) {
 	vTaskDelete(TASK_Handle_wifi);
 }
 
-// 初始化 WiFi 并 启动按键接收循环 (Core 0)
-void my_loop(void *param) {
-	// 等待选择 SSID 并初始化 WiFi
+// 选择SSID 并 连接WiFi
+void connect_wifi() {
 	Serial.println("初始化 WiFi");
 
+	int16_t ssid_num = sizeof(ssids) / sizeof(ssids[0]) - 1;
+	int16_t password_num = sizeof(passwords) / sizeof(passwords[0]) - 1;
+	if (ssid_num != password_num) {
+		Serial.println("SSID 数量与密码数量不一致");
+		main_label_add_text("SSID 数量与密码数量不一致");
+		while (1) vTaskDelay(10000 / portTICK_PERIOD_MS);
+	}
+	
 	main_label_text = "#0060b9 请选择 WIFI：\n";
-	for (int i=1; i<=6; i++) {
+	for (int16_t i=1; i<=ssid_num; i++) {
 		main_label_text += i;
 		main_label_text += ": ";
 		main_label_text += ssids[i];
 		main_label_text += "\n";
 	}
-	main_label_set_text(main_label_text);
+	main_label_set_text(main_label_text.c_str());
 
 	// 等待选择 SSID 并初始化 WiFi
 	while (1) {
 		proc_key = read_key();
-		wifi_choose = 0;
-		if (proc_key == "1") wifi_choose = 1;
-		else if (proc_key == "2") wifi_choose = 2;
-		else if (proc_key == "3") wifi_choose = 3;
-		else if (proc_key == "4") wifi_choose = 4;
-		else if (proc_key == "5") wifi_choose = 5;
-		else if (proc_key == "6") wifi_choose = 6;
-		else if (proc_key == "$12") wifi_choose = 12;
-		else {
-			proc_key = "";
-			Serial.println("unknow SSID Key: " + proc_key);
-		}
-		if (wifi_choose && wifi_choose != 12) {
-			Serial.println("Choose SSID Key: " + proc_key);
+		if (proc_key.toInt() > 0 && proc_key.toInt() <= ssid_num) {
+			int wifi_choose = proc_key.toInt();
+			
+			Serial.println("选择 SSID: " + proc_key);
 			WiFi.mode(WIFI_STA);
 			WiFi.begin(ssids[wifi_choose], passwords[wifi_choose]);
 
 			xTaskCreate(
 				wait_wifi_connection,     // 任务函数
 				"wait_wifi_connection",   // 任务名称
-				4096,            // 堆栈大小
-				NULL,            // 参数
-				1,               // 优先级
+				4096,              // 堆栈大小
+				NULL,              // 参数
+				1,                 // 优先级
 				&TASK_Handle_wifi  // 任务句柄
 			);
-			proc_key = "";
 			break;
-		} else if (wifi_choose == 12) {
-			proc_key = "Skip WIFI";
+		}
+		else if (proc_key == "$12") {
 			skip_wifi = 1;
+			Serial.println("跳过 WIFI 连接");
 			main_label_set_text("#115df5 跳过 WIFI 连接#");
 			break;
-		} else vTaskDelay(10 / portTICK_PERIOD_MS);
+		}
+		else Serial.println("未知 SSID");
+
+		vTaskDelay(10 / portTICK_PERIOD_MS);
 	}
+}
+
+// 初始化 WiFi 并 启动按键接收循环 (Core 0)
+void my_loop(void *param) {
+	connect_wifi();
 
 	// 初始化 I2S
 	setupI2S();
@@ -317,9 +394,9 @@ void my_loop(void *param) {
 		tmp_doc.clear();
 		DeserializationError error = deserializeJson(tmp_doc, message.data());
 		if (error) {
-			Serial.print("JSON parse failed: ");
+			Serial.print("JSON 解析错误: ");
 			Serial.println(error.f_str());
-			main_label_add_text("JSON parse failed: " + String(error.f_str()));
+			main_label_add_text( ( "#c81414 JSON 解析错误: #\n" + String(error.c_str()) ).c_str() );
 			return;
 		}
 		
@@ -327,27 +404,27 @@ void my_loop(void *param) {
 		
 		// 处理不同的事件类型
 		if (strcmp(eventType, "session.created") == 0) {
-			Serial.println("[事件 Event] session.created");
-			// main_label_add_text("[事件 Event] session.created\n");
+			Serial.println("[事件] session.created");
+			// main_label_add_text("[事件] session.created\n");
 		}
 		else if (strcmp(eventType, "session.updated") == 0) {
-			Serial.println("[事件 Event] session.updated");
-			// main_label_add_text("[事件 Event] session.updated\n");
+			Serial.println("[事件] session.updated");
+			// main_label_add_text("[事件] session.updated\n");
 		}
 		else if (strcmp(eventType, "input_audio_buffer.speech_started") == 0) {
-			Serial.println("[事件 Event] Speech started detected (VAD)");
-			// main_label_add_text("[事件 Event] Speech started detected (VAD)\n");
+			Serial.println("[事件] Speech started detected (VAD)");
+			// main_label_add_text("[事件] Speech started detected (VAD)\n");
 		}
 		else if (strcmp(eventType, "input_audio_buffer.speech_stopped") == 0) {
-			Serial.println("[事件 Event] Speech stopped detected (VAD)");
-			// main_label_add_text("[事件 Event] Speech stopped detected (VAD)\n");
+			Serial.println("[事件] Speech stopped detected (VAD)");
+			// main_label_add_text("[事件] Speech stopped detected (VAD)\n");
 		}
 		else if (strcmp(eventType, "conversation.item.input_audio_transcription.text") == 0) {
 			// 实时识别结果
 			String fullText = tmp_doc["text"].as<String>() + tmp_doc["stash"].as<String>();
-			Serial.print("[实时识别 Realtime] ");
+			Serial.print("[实时识别] ");
 			Serial.println(fullText);
-			// main_label_add_text("[实时识别 Realtime] " + fullText + "\n");
+			// main_label_add_text("[实时识别] " + fullText + "\n");
 		}
 		else if (strcmp(eventType, "conversation.item.input_audio_transcription.completed") == 0) {
 			// 最终识别结果
@@ -359,21 +436,21 @@ void my_loop(void *param) {
 		}
 		else if (strcmp(eventType, "session.finished") == 0) {
 			// 会话结束
-			Serial.println("[事件 Event] session.finished\n");
-			// main_label_add_text("[事件 Event] session.finished\n");
+			Serial.println("[事件] session.finished\n");
+			// main_label_add_text("[事件] session.finished\n");
 		}
 		else if (strcmp(eventType, "error") == 0) {
 			// 错误处理
-			Serial.print("[错误 Error] ");
+			Serial.print("[错误] ");
 			if (tmp_doc["error"]["message"]) {
 				Serial.println(tmp_doc["error"]["message"].as<String>());
-				// main_label_add_text("[错误 Error] " + tmp_doc["error"]["message"].as<String>());
+				main_label_add_text(("[错误] " + tmp_doc["error"]["message"].as<String>()).c_str());
 			}
 		}
 	});
 
 	if (lvgl_mux_lock()) { // 上锁
-		lv_textarea_set_placeholder_text(g_ta, "请输入");
+		lv_textarea_set_placeholder_text(ta, "请输入");
 		lvgl_mutex_unlock(); // 解锁
 	}
 
@@ -388,12 +465,8 @@ void my_loop(void *param) {
 			print_heap_free();
 
 			if (lvgl_mux_lock()) { // 上锁
-				user_prompt = lv_textarea_get_text(g_ta);
-				if (user_prompt == "") { // 输入为空，跳过
-					lvgl_mutex_unlock(); // 解锁
-					continue;
-				}
-
+				user_prompt = lv_textarea_get_text(ta);
+				
 				lv_obj_scroll_to_y(main_panel, 0, LV_ANIM_ON);
 
 				lvgl_mutex_unlock(); // 解锁
@@ -403,7 +476,7 @@ void my_loop(void *param) {
 			main_label_set_text("#7e00d2 等待结果中 ...#");
 
 			getAnswer(user_prompt);
-			main_label_set_text(answer);
+			main_label_set_text(answer.c_str());
 		} else if (proc_key == "BCK") {
 			send_key_to_ta(LV_KEY_BACKSPACE); // user_prompt = user_prompt.substring(0, user_prompt.length() - 1);
 		} else if (proc_key == "DEL") {
@@ -420,34 +493,16 @@ void my_loop(void *param) {
 			send_key_to_ta(LV_KEY_ENTER);
 		} else if (proc_key == "&2") {
 			bypass_proc = !bypass_proc;
-
-			if (lvgl_mux_lock()) { // 上锁
-				user_prompt = lv_textarea_get_text(g_ta);
-				lv_textarea_set_text(g_ta, bypass_proc ? "跳过拼音预处理: 1" : "跳过拼音预处理: 0");
-				lvgl_mutex_unlock(); // 解锁
-			}
-
-			vTaskDelay(700 / portTICK_PERIOD_MS);
-
-			ta_set_text(user_prompt.c_str());
+			ta_tmp_show(bypass_proc ? "跳过拼音预处理: 1" : "跳过拼音预处理: 0");
 		} else if (proc_key == "&3") {
 			show_proced = !show_proced;
-
-			if (lvgl_mux_lock()) { // 上锁
-				user_prompt = lv_textarea_get_text(g_ta);
-				lv_textarea_set_text(g_ta, show_proced ? "显示拼音处理结果: 1" : "显示拼音处理结果: 0");
-				lvgl_mutex_unlock(); // 解锁
-			}
-
-			vTaskDelay(700 / portTICK_PERIOD_MS);
-
-			ta_set_text(user_prompt.c_str());
+			ta_tmp_show(show_proced ? "显示拼音处理结果: 1" : "显示拼音处理结果: 0");
 		} else if (proc_key.length() >= 3 && proc_key.startsWith("$S") && proc_key.substring(2).toInt() > 0 && proc_key.substring(2).toInt() <= MAX_CHAT_WINDOW) {
 			if (lvgl_mux_lock()) { // 上锁
-				chat_windows[chat_window_select].ta_text = lv_textarea_get_text(g_ta);
+				chat_windows[chat_window_select].ta_text = lv_textarea_get_text(ta);
 				chat_windows[chat_window_select].main_label_text = lv_label_get_text(main_label);
 				
-				lv_textarea_set_text(g_ta, 
+				lv_textarea_set_text(ta, 
 					(String("当前对话窗口: ") + (uint16_t)(chat_window_select+1) + " -> " + 
 					proc_key.substring(2).toInt()).c_str()
 				);
@@ -469,11 +524,8 @@ void my_loop(void *param) {
 		} else if (proc_key == "&1") {
 			if (!asr_idle) continue;
 
-			String tmp = ""; // 保存当前文本, 用于后续恢复 (当前文本长度不定，所以不能用 char* 存储)
-			if (lvgl_mux_lock()) { // 上锁
-				tmp = lv_label_get_text(main_label);
-				lvgl_mutex_unlock(); // 解锁
-			}
+			// 保存当前文本, 用于后续恢复
+			main_label_tmp_save();
 
 			Serial.print("录音中 ... ");
 			main_label_set_text("录音中 ... ");
@@ -524,28 +576,31 @@ void my_loop(void *param) {
 			
 			if (asr_text.length() > 0) {
 				if (lvgl_mux_lock()) { // 上锁
-					lv_textarea_add_text(g_ta, asr_text.c_str());
+					lv_textarea_add_text(ta, asr_text.c_str());
 					lvgl_mutex_unlock(); // 解锁
 				}
 			}
 			// main_label_set_text("ASR 识别完成: ");
 			// main_label_add_text(asr_text);
 
-			main_label_set_text(tmp);
+			// 恢复 main_label 上的文本
+			main_label_tmp_recover();
 		} else {
 			// send_key_to_ta(proc_key[0]);
 			ta_add_text(proc_key.c_str());
 		}
 
-		// if (digitalRead(0) == LOW) {
-		// 	vTaskDelay(15 / portTICK_PERIOD_MS);
-		// 	if (digitalRead(0) == HIGH) continue;
+		if (digitalRead(0) == LOW) {
+			vTaskDelay(15 / portTICK_PERIOD_MS);
+			if (digitalRead(0) == HIGH) continue;
 
-		// 	Serial.println("Wait for recording");
-		// }
+			Serial.println("Wait for recording");
+		}
 
 		client.poll(); // 处理接收的消息
 		
+		// 只保留 串口最后 1 个字符
+		while (Serial1.available() > 1) Serial1.read();
 // 		vTaskDelay(1 / portTICK_PERIOD_MS);
 	}
 }
@@ -662,6 +717,17 @@ void getAnswer(String& _user_prompt) {
 		Serial.println(answer);
 		return;
 	}
+	if (_user_prompt == "-wifi") {
+		connect_wifi();
+		answer = "WiFi ..";
+		return;
+	}
+	if (_user_prompt.startsWith("-uart=")) {
+		// t = _user_prompt.substring(_user_prompt.indexOf("=") + 1);
+		answer = "无";
+		return;
+	}
+
 	// 快捷文本
 	if (_user_prompt == "-t-1") {answer = "";return;}
 	if (_user_prompt == "-t-2") {answer = "";return;}
@@ -876,22 +942,6 @@ void reset_chat_history() {
     chat_windows[chat_window_select].chatHistory.clear();
 }
 
-// 修改 main_label 的文本
-void main_label_add_text(String print_text) {
-	main_label_text += print_text;
-	if (lvgl_mux_lock()) { // 上锁
-		lv_label_set_text(main_label, main_label_text.c_str());
-		lvgl_mutex_unlock();
-	}
-}
-void main_label_set_text(String print_text) {
-	main_label_text = print_text;
-	if (lvgl_mux_lock()) { // 上锁
-		lv_label_set_text(main_label, main_label_text.c_str());
-		lvgl_mutex_unlock();
-	}
-}
-
 // // 鼠标回调
 // void my_input_read(lv_indev_drv_t * drv, lv_indev_data_t*data) {
 // 	data->point.x = touchpad_x + 0.5;
@@ -957,19 +1007,19 @@ static void ta_event_cb(lv_event_t * e) {
 /* 物理按键输入接口 */
 void send_key_to_ta(uint32_t key) {
 	// 确保文本框有焦点
-    if(g_ta) {
+    if(ta) {
 		if (lvgl_mux_lock()) { // 上锁
-			lv_obj_add_state(g_ta, LV_STATE_FOCUSED);
+			lv_obj_add_state(ta, LV_STATE_FOCUSED);
 			// 发送给键盘 (g_kb)
 			if(g_kb) {
 				// Serial.printf("send_key_to_ta: g_kb: %c\r\n", (char)key);
 				// 向文本框发送 KEY 事件
-				lv_event_send(g_ta, LV_EVENT_KEY, &key);
+				lv_event_send(ta, LV_EVENT_KEY, &key);
 			} else Serial.println("send_key_to_ta: g_kb is NULL!");
 			
 			lvgl_mutex_unlock();
 		}
-	} else Serial.println("send_key_to_ta: g_ta is NULL!");
+	} else Serial.println("send_key_to_ta: ta is NULL!");
 }
 
 // 全部初始化
@@ -1284,7 +1334,7 @@ void asr_send(uint16_t* pcm_data, uint32_t size) {
 		serializeJson(tmp_doc, tmp_output);
 		
 		Serial.println("[ASR] input_audio_buffer.append [" + String(i) + " / " + String(totalChunks) + "]");
-		main_label_set_text("[ASR] input_audio_buffer.append [" + String(i) + " / " + String(totalChunks) + "]");
+		main_label_set_text( ("[ASR] input_audio_buffer.append [" + String(i) + " / " + String(totalChunks) + "]").c_str() );
 		client.send(tmp_output);
 
 		offset += chunkSize;
