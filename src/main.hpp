@@ -32,7 +32,6 @@
 // I2S 相关
 #include <base64.h>
 #include <driver/i2s.h>
-// #include <mbedtls/md.h>
 #include <ArduinoWebsockets.h>
 
 // ###################### API #########################
@@ -95,6 +94,7 @@
 // VAD模式设置: true=VAD模式（服务端自动断句），false=Manual模式（客户端控制断句）
 #define ENABLE_SERVER_VAD false
 #define ASR_LANGUAGE "zh"
+
 // ############################## 提示词 #################################
 #define USE_COLOR_ANSWER 0 // 是否使用颜色回答
 
@@ -178,15 +178,20 @@ void hardware_init();
 void addMessageToHistory(const char* role, const String content);
 
 /**
- * @brief 构建并发送 HTTP 请求到 API
- * @param _systemPrompt 系统提示词
- * @param _userPrompt 用户的当前问题
- * @param _model_name 模型名称
- * @param _response 存储回复内容的字符串指针
+ * @brief 构建并发送 HTTPS 请求到 API
+ * @param _SYSTEM_PROMPT 系统提示词 引用
+ * @param _userPrompt 用户的当前问题 引用
+ * @param _MAIN_MODEL_NAME 模型名称 引用
+ * @param _response 存储 回复内容 或 错误信息 的字符串引用
  * @param useHistory 是否使用轮次对话
- * @return AI的回复内容字符串
+ * @return 运行结果: (详见 _response)
+ *           -1: _response 为空
+ *           -2: 无网络
+ *           -3: JSON解析失败
+ *           -4: 响应码
+ *           -5: 请求失败
  */
-int8_t getQwenAnswer(const String _systemPrompt, const String _userPrompt, String _model_name, String* _response, bool useHistory);
+int8_t getAPIanswer(const char* _SYSTEM_PROMPT, const String& _userPrompt, const char* _MAIN_MODEL_NAME, String& _response, bool useHistory);
 
 // 重置对话历史
 void reset_chat_history();
@@ -204,6 +209,8 @@ void STTsend();
 void setupI2S();
 
 // ############### 其他 ################
+bool check_key();
+
 // 初始化 SD卡
 void init_SDcard();
 

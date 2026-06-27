@@ -100,8 +100,8 @@ String proced;
 // 用户提示词
 String user_prompt = "";
 
-bool show_proced = 0;   // 是否显示 预处理过的 提示词, 由 $# 键切换
-uint8_t bypass_proc = 0; // 是否跳过 拼音预处理, 由 $@ 键切换
+bool show_proced = 0;   // 是否显示 预处理过的 提示词, 由 &3 键切换
+uint8_t bypass_proc = 0; // 是否跳过 拼音预处理, 由 &2 键切换
 // bool enable_search = 0; // 是否启用 联网搜索
 
 // ###################### other #########################
@@ -171,7 +171,7 @@ void setup() {
 		&TASK_HandleOne,  // 任务句柄
 		0             // 核心编号 (0或1)
 	);
-	esp_task_wdt_delete(TASK_HandleOne);
+	// esp_task_wdt_delete(TASK_HandleOne);
 }
 
 // 读取按键输入
@@ -215,6 +215,12 @@ void ta_set_text(const char* text) {
 		lv_textarea_set_text(g_ta, text);
 		lvgl_mutex_unlock();  // 解锁
 	}
+}
+
+bool check_key() {
+	if (!Serial1.available()) return 0;
+	while (Serial1.available()) Serial1.read();
+	return 1;
 }
 
 // 等待 WiFi 连接
@@ -383,7 +389,10 @@ void my_loop(void *param) {
 
 			if (lvgl_mux_lock()) { // 上锁
 				user_prompt = lv_textarea_get_text(g_ta);
-				if (user_prompt == "") continue;  // 输入为空，跳过
+				if (user_prompt == "") { // 输入为空，跳过
+					lvgl_mutex_unlock(); // 解锁
+					continue;
+				}
 
 				lv_obj_scroll_to_y(main_panel, 0, LV_ANIM_ON);
 
@@ -543,6 +552,11 @@ void my_loop(void *param) {
 
 // 根据情况发送不同请求
 void getAnswer(String& _user_prompt) {
+	if (_user_prompt == "") {
+		Serial.println("输入为空");
+		answer = "输入为空";
+		return;
+	} 
 	if (_user_prompt == "-t") {
 		if (syncing_sntp) {
 			answer = "#bb5a14 正在同步时间 ";
@@ -552,6 +566,7 @@ void getAnswer(String& _user_prompt) {
 		char buffer[80];
 		if(!getLocalTime(&timeinfo)){
 			Serial.println("获取时间失败");
+			answer = "获取时间失败";
 			return;
 		}
 		strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S\r\n", &timeinfo);
@@ -656,23 +671,23 @@ void getAnswer(String& _user_prompt) {
 	Serial.println("_user_prompt: " + _user_prompt);
 
 	if (bypass_proc == 1) {
-		getQwenAnswer(SYS_PROMPT_NO_PROC, _user_prompt, MAIN_MODEL_NAME, &answer, true);
+		getAPIanswer(SYS_PROMPT_NO_PROC, _user_prompt, MAIN_MODEL_NAME, answer, true);
 	} else if (bypass_proc == 0) {
-		if (getQwenAnswer(PROC_SYS_PROMPT, _user_prompt, PROC_MODEL_NAME, &proced, false) != 0) {
+		if (getAPIanswer(PROC_SYS_PROMPT, _user_prompt, PROC_MODEL_NAME, proced, false) != 0) {
 			answer = proced;
 			return;
 		} else {
-			Serial.println("proced: " + proced);
+			Serial.println("处理后: " + proced);
 			String tmp_ans;
-			getQwenAnswer(SYS_PROMPT, proced, MAIN_MODEL_NAME, &tmp_ans, true);
-			if (show_proced) answer = "PROCED: " + proced + "\n" + tmp_ans;
+			getAPIanswer(SYS_PROMPT, proced, MAIN_MODEL_NAME, tmp_ans, true);
+			if (show_proced) answer = "处理后: " + proced + "\n" + tmp_ans;
 			else answer = tmp_ans;
 		}
 	}
 
-	Serial.print("\r\n--- start answer ---\r\n`");
+	Serial.print("\r\n--- start answer ---\r\n");
 	Serial.println(answer);
-	Serial.println("`\r\n--- end answer ---");
+	Serial.println("\r\n--- end answer ---");
 	
 	// bypass_proc = 0;
 	// show_proced = 0;
@@ -718,40 +733,44 @@ void print_heap_free() {
 void addMessageToHistory(const char* role, const String content) {
     // 如果历史记录已满，则移除最早的一条用户和助手消息
     if (chat_windows[chat_window_select].chatHistory.size() >= (MAX_MESSAGES * 2 + 1)) {
-        // for (int i = 1; i < messageCount - 2; i++) {
-		// 	chat_windows[chat_window_select].chatHistory[i] = chat_windows[chat_window_select].chatHistory[i + 2];
-		// }
 		chat_windows[chat_window_select].chatHistory.erase(
 			chat_windows[chat_window_select].chatHistory.begin()+1,
 			chat_windows[chat_window_select].chatHistory.begin()+2
 		);
-        // messageCount -= 2;
     }
     // 将消息以JSON字符串的形式存入数组
-    // chat_windows[chat_window_select].chatHistory[messageCount++] = String("{\"role\":\"") + role + "\",\"content\":\"" + content + "\"}";
     chat_windows[chat_window_select].chatHistory.push_back(
 		String("{\"role\":\"") + role + "\",\"content\":\"" + content + "\"}"
 	);
-    // messageCount++;
 }
 
 /**
- * @brief 构建并发送 HTTP 请求到 API
- * @param _SYSTEM_PROMPT 系统提示词
- * @param _userPrompt 用户的当前问题
- * @param _MAIN_MODEL_NAME 模型名称
- * @param _response 存储回复内容的字符串指针
- * @param useHistory 是否使用轮次对话
- * @return AI的回复内容字符串
+ * @brief 构建并发送 HTTPS 请求到 API
+ * @param _SYSTEM_PROMPT 系统提示词 字符串
+ * @param _userPrompt 用户的当前问题 String引用
+ * @param _MAIN_MODEL_NAME 模型名称 字符串
+ * @param _response 存储 回复内容 或 错误信息 的String引用
+ * @param useHistory 是否使用多轮次对话
+ * @return 运行结果: (详见 _response)
+ *            0: 成功
+ *           -1: _response 为空
+ *           -2: 无网络
+ *           -3: JSON解析失败
+ *           -4: 响应码
+ *           -5: 请求失败
  */
-int8_t getQwenAnswer(const String _SYSTEM_PROMPT, const String _userPrompt, String _MAIN_MODEL_NAME, String* _response, bool useHistory) {
-    if (_response == nullptr) return -1;
+int8_t getAPIanswer(const char* _SYSTEM_PROMPT, const String& _userPrompt, const char* _MAIN_MODEL_NAME, String& _response, bool useHistory) {
+	// if (_response == NULL) return -1;
 	if (connecting_wifi) {
-		*_response = "#b9450f 正在连接 WiFi ";
+		Serial.println("正在连接 WiFi");
+		main_label_set_text("#b9450f 正在连接 WiFi #");
+		asr_idle = 1;
 		return -2;
 	}
 	if (WiFi.status() != WL_CONNECTED) {
-		*_response = "#e31919 未连接 WiFi";
+		Serial.println("未连接 WiFi");
+		main_label_set_text("#e31919 未连接 WiFi #");
+		asr_idle = 1;
 		return -2;
 	}
 
@@ -766,7 +785,7 @@ int8_t getQwenAnswer(const String _SYSTEM_PROMPT, const String _userPrompt, Stri
     http.addHeader("Content-Type", "application/json");
     http.addHeader("Authorization", "Bearer " + String(apiKey));
 
-	// --- 核心：使用 ArduinoJson 构建请求体 ---
+	// --- 使用 ArduinoJson 构建请求体 ---
 	JsonDocument doc;
 
 	doc["model"] = _MAIN_MODEL_NAME;
@@ -781,7 +800,6 @@ int8_t getQwenAnswer(const String _SYSTEM_PROMPT, const String _userPrompt, Stri
 		addMessageToHistory("user", _userPrompt);
 
 		// 将历史记录中的每一条消息解析并添加到JSON数组中
-		// for (int i = 0; i < messageCount; i++) {
 		for (String tmp : chat_windows[chat_window_select].chatHistory) {
 			JsonDocument msgDoc;
 			DeserializationError error = deserializeJson(msgDoc, tmp);
@@ -807,11 +825,10 @@ int8_t getQwenAnswer(const String _SYSTEM_PROMPT, const String _userPrompt, Stri
     
 	response = http.getString();
 	http.end();
-
 	
 	if (httpResponseCode > 0){
 		if (httpResponseCode == 200) {
-			// Parse JSON response
+			// 解析 JSON 响应
 			JsonDocument responseDoc;
             DeserializationError error = deserializeJson(responseDoc, response);
 
@@ -820,43 +837,42 @@ int8_t getQwenAnswer(const String _SYSTEM_PROMPT, const String _userPrompt, Stri
 				// 将AI的回复也加入历史记录
 				if (useHistory) addMessageToHistory("assistant", String(aiContent));
 
-                *_response = String(aiContent);
+                _response = String(aiContent);
                 return 0;
             } else {
-                *_response = "JSON解析失败, Response: \r\n" + response;
+                _response = "#e34819 JSON解析失败, Response: \r\n" + response + " #";
 				Serial.println();
 				Serial.println(response);
 				Serial.println();
 				return -3;
             }
 		} else {
-			*_response = "响应码: " + String(httpResponseCode) + "\r\nResponse: \r\n" + response;
+			_response = "#c5b910 响应码: " + String(httpResponseCode) + "\r\nResponse: \r\n" + response + " #";
 			Serial.println();
 			Serial.println(response);
 			Serial.println();
-			return -5;
+			return -4;
 		}
 	} else {
-		*_response = "请求失败, ";
+		_response = "#e31919 请求失败, ";
 		if (httpResponseCode == HTTPC_ERROR_TOO_LESS_RAM) {
-			*_response += "内存不足";
+			_response += "内存不足";
 		} else if (httpResponseCode == HTTPC_ERROR_READ_TIMEOUT) {
-			*_response += "读取超时";
+			_response += "读取超时";
 		} else if (httpResponseCode == HTTPC_ERROR_CONNECTION_REFUSED) {
-			*_response += "连接被拒绝";
+			_response += "连接被拒绝";
 		} else if (httpResponseCode == HTTPC_ERROR_CONNECTION_LOST) {
-			*_response += "连接丢失";
+			_response += "连接丢失";
 		} else {
-			*_response += "错误码: " + String(httpResponseCode);
+			_response += "错误码: " + String(httpResponseCode);
 		}
+		_response += " #";
 		return -5;
 	}
 }
 
 // 重置对话历史
 void reset_chat_history() {
-    // messageCount = 0;
-    // memset(chat_windows[chat_window_select].chatHistory, 0, sizeof(chatHistory));
     chat_windows[chat_window_select].chatHistory.clear();
 }
 
@@ -976,7 +992,7 @@ void hardware_init() {
 			Serial.println("gfx begin failed!");
 			while (true) vTaskDelay(10000);
 		}
-		gfx->fillScreen(BLACK);
+		gfx->fillScreen(0);
 		spi_mux_unlock(); // 解锁
 	}
 
@@ -988,7 +1004,7 @@ void hardware_init() {
 	// ledcAttach(LEDC_CHANNEL , LEDC_FREQ, LEDC_TIMER_10_BIT);
 	// ledcAttachPin(, LEDC_CHANNEL);
 
-	ledcWrite(LEDC_CHANNEL , ledc_duty ? (1 << LEDC_TIMER_10_BIT) / 100 * ledc_duty : 0);
+	ledcWrite(EXAMPLE_PIN_NUM_LCD_BL , ledc_duty ? (1 << LEDC_TIMER_10_BIT) / 100 * ledc_duty : 0);
 	// pinMode(EXAMPLE_PIN_NUM_LCD_BL, OUTPUT);
 	// digitalWrite(EXAMPLE_PIN_NUM_LCD_BL, HIGH);
 #endif
@@ -1133,7 +1149,6 @@ void setupI2S() {
 	Serial.print("Setup I2S ...");
 	esp_err_t err;
 
-	// i2s_install();
 	const i2s_config_t i2s_config = {
 		.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
 		.sample_rate = SAMPLE_RATE,
@@ -1174,8 +1189,21 @@ void setupI2S() {
 
 // 向 Qwen-ASR 发送音频数据
 void asr_send(uint16_t* pcm_data, uint32_t size) {
-	Serial.print("[发送 Send] 连接服务器中 ... ");
-	main_label_set_text("[发送 Send] 连接服务器中 ... ");
+	if (connecting_wifi) {
+		Serial.println("#b9450f 正在连接 WiFi ");
+		main_label_set_text("#b9450f 正在连接 WiFi ");
+		asr_idle = 1;
+		return;
+	}
+	if (WiFi.status() != WL_CONNECTED) {
+		Serial.println("#e31919 未连接 WiFi");
+		main_label_set_text("#e31919 未连接 WiFi");
+		asr_idle = 1;
+		return;
+	}
+
+	Serial.print("[ASR] 连接服务器中 ... ");
+	main_label_set_text("[ASR] 连接服务器中 ... ");
 	
 	// 添加 Authorization 和 OpenAI-Beta 请求头
 	client.addHeader("Authorization", "Bearer " apiKey);
@@ -1228,8 +1256,8 @@ void asr_send(uint16_t* pcm_data, uint32_t size) {
 	
 	serializeJson(tmp_doc, tmp_output);
 	
-	Serial.println("[发送 Send] session.update");
-	main_label_add_text("[发送 Send] session.update\n");
+	Serial.println("[ASR] session.update");
+	main_label_add_text("[ASR] session.update\n");
 	client.send(tmp_output);
 	
 	vTaskDelay(15 / portTICK_PERIOD_MS);
@@ -1255,8 +1283,8 @@ void asr_send(uint16_t* pcm_data, uint32_t size) {
 		
 		serializeJson(tmp_doc, tmp_output);
 		
-		Serial.println("[发送 Send] input_audio_buffer.append [" + String(i) + " / " + String(totalChunks) + "]");
-		main_label_set_text("[发送 Send] input_audio_buffer.append [" + String(i) + " / " + String(totalChunks) + "]");
+		Serial.println("[ASR] input_audio_buffer.append [" + String(i) + " / " + String(totalChunks) + "]");
+		main_label_set_text("[ASR] input_audio_buffer.append [" + String(i) + " / " + String(totalChunks) + "]");
 		client.send(tmp_output);
 
 		offset += chunkSize;
@@ -1273,8 +1301,8 @@ void asr_send(uint16_t* pcm_data, uint32_t size) {
 		
 		serializeJson(tmp_doc, tmp_output);
 		
-		Serial.println("[发送 Send] input_audio_buffer.commit");
-		main_label_set_text("[发送 Send] input_audio_buffer.commit\n");
+		Serial.println("[ASR] input_audio_buffer.commit");
+		main_label_set_text("[ASR] input_audio_buffer.commit\n");
 		client.send(tmp_output);
 	}
 	
@@ -1287,14 +1315,14 @@ void asr_send(uint16_t* pcm_data, uint32_t size) {
 	
 	serializeJson(tmp_doc, tmp_output);
 	
-	Serial.println("[发送 Send] session.finish");
-	main_label_add_text("[发送 Send] session.finish\n");
+	Serial.println("[ASR] session.finish");
+	// main_label_set_text("[ASR] session.finish\n");
 	client.send(tmp_output);
 	
 	// 等待最终结果（在回调中处理session.finished事件）
-	Serial.println("[发送 Send] 等待最终结果");
-	main_label_add_text("[发送 Send] 等待最终结果\n");
+	Serial.println("[ASR] 等待最终结果");
+	main_label_set_text("[ASR] 等待最终结果\n");
 }
 
-// 0x00197fff
+// 0x001cefff
 
