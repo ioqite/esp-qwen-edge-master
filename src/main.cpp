@@ -64,10 +64,6 @@ String tmp_output;      // 临时文本输出
 JsonDocument tmp_doc;   // 临时 JSON 对象
 int eventIdCounter = 0; // 事件ID计数器
 
-// 临时文本
-String ta_tmp_text = "";
-String main_label_tmp_text = "";
-
 // 状态变量
 bool transferring_key = 0;     // 开始接收新的键 (有的键是多字母的)
 bool skip_wifi = 0;            // 是否跳过WiFi连接
@@ -84,11 +80,13 @@ struct chat_window_t{
 	String ta_text;
 	String main_label_text;
 	std::vector<String> chatHistory; // 使用一个数组来存储 每一条JSON格式的消息(String) max:MAX_MESSAGES * 2 + 1
-	// uint8_t messageCount = 0;  // 当前历史消息数量
+	uint32_t ta_pos = 0;
+	int16_t main_label_pos = 0;
 } chat_windows[MAX_CHAT_WINDOW];
 
 // 当前选中的 对话窗口
 uint8_t chat_window_select = 0;
+#define current_window chat_windows[chat_window_select]
 
 // ###################### 请求管理 #########################
 // 请求所需变量
@@ -115,7 +113,7 @@ void my_disp_flush(lv_disp_drv_t *disp_drv, const lv_area_t *area, lv_color_t *c
 
 #if LV_USE_LOG != 0
 void my_print(const char *buf) {
-	Serial.printf(buf);
+	Serial.print(buf);
 	Serial.flush();
 }
 #endif
@@ -143,6 +141,7 @@ void setup() {
 	// lv_obj_set_style_text_font(main_label, &siyuan_normal_ext, 0);
 	lv_obj_align(main_label, LV_ALIGN_TOP_MID, 0, 0);
 	lv_label_set_text(main_label, "");
+	lv_obj_set_scroll_dir(main_label, LV_DIR_VER);
 
     // 创建文本框
     ta = lv_textarea_create(lv_scr_act());
@@ -220,28 +219,35 @@ void ta_set_text(const char* text) {
 // 暂存 ta 上的文本
 void ta_tmp_save() {
 	if (lvgl_mux_lock()) { // 上锁
-		ta_tmp_text = lv_textarea_get_text(ta);
+		current_window.ta_text = lv_textarea_get_text(ta);
+		current_window.ta_pos = lv_textarea_get_cursor_pos(ta);
 		lvgl_mutex_unlock(); // 解锁
 	}
 }
 // 恢复 ta 上的文本
 void ta_tmp_recover() {
 	if (lvgl_mux_lock()) { // 上锁
-		lv_textarea_set_text(ta, ta_tmp_text.c_str());
+		lv_textarea_set_text(ta, current_window.ta_text.c_str());
+		lv_textarea_set_cursor_pos(ta, current_window.ta_pos);
 		lvgl_mutex_unlock(); // 解锁
 	}
 }
 // 在 ta 上临时显示文本
 void ta_tmp_show(const char* text, uint16_t delay_ms = 700) {
 	if (lvgl_mux_lock()) { // 上锁
-		ta_tmp_text = lv_textarea_get_text(ta);
+		current_window.ta_text = lv_textarea_get_text(ta);
+		current_window.ta_pos = lv_textarea_get_cursor_pos(ta);
 		lv_textarea_set_text(ta, text);
 		lvgl_mutex_unlock(); // 解锁
 	}
 
 	vTaskDelay(delay_ms / portTICK_PERIOD_MS);
 
-	ta_set_text(ta_tmp_text.c_str());
+	ta_set_text(current_window.ta_text.c_str());
+	if (lvgl_mux_lock()) { // 上锁
+		lv_textarea_set_cursor_pos(ta, current_window.ta_pos);
+		lvgl_mutex_unlock(); // 解锁
+	}
 }
 
 // ============== main_label 操作 ===============
@@ -264,28 +270,39 @@ void main_label_set_text(const char* text) {
 // 暂存 main_label 上的文本
 void main_label_tmp_save() {
 	if (lvgl_mux_lock()) { // 上锁
-		main_label_tmp_text = lv_label_get_text(main_label);
+		current_window.main_label_text = lv_label_get_text(main_label);
+		current_window.main_label_pos = lv_obj_get_scroll_y(main_panel);
+		Serial.println(current_window.main_label_pos);
 		lvgl_mutex_unlock(); // 解锁
 	}
 }
 // 恢复 main_label 上的文本
 void main_label_tmp_recover() {
 	if (lvgl_mux_lock()) { // 上锁
-		lv_label_set_text(main_label, main_label_tmp_text.c_str());
+		lv_label_set_text(main_label, current_window.main_label_text.c_str());
+		lv_obj_scroll_to_y(main_panel, current_window.main_label_pos, LV_ANIM_ON);
+		Serial.println(current_window.main_label_pos);
 		lvgl_mutex_unlock(); // 解锁
 	}
 }
 // 在 main_label 上临时显示文本
 void main_label_tmp_show(const char* text, uint16_t delay_ms = 700) {
 	if (lvgl_mux_lock()) { // 上锁
-		main_label_tmp_text = lv_label_get_text(main_label);
+		current_window.main_label_text = lv_label_get_text(main_label);
+		current_window.main_label_pos = lv_obj_get_scroll_y(main_panel);
+		Serial.println(current_window.main_label_pos);
 		lv_label_set_text(main_label, text);
 		lvgl_mutex_unlock(); // 解锁
 	}
 
 	vTaskDelay(delay_ms / portTICK_PERIOD_MS);
 
-	main_label_set_text(main_label_tmp_text.c_str());
+	if (lvgl_mux_lock()) { // 上锁
+		lv_label_set_text(main_label, current_window.main_label_text.c_str());
+		lv_obj_scroll_to_y(main_panel, current_window.main_label_pos, LV_ANIM_ON);
+		Serial.println(current_window.main_label_pos);
+		lvgl_mutex_unlock(); // 解锁
+	}
 }
 
 // 检查是否有按键按下
@@ -473,7 +490,7 @@ void my_loop(void *param) {
 			}
 
 			Serial.println("等待结果中 ...");
-			main_label_set_text("#7e00d2 等待结果中 ...#");
+			main_label_set_text("#7e00d2 等待结果中 ... #");
 
 			getAnswer(user_prompt);
 			main_label_set_text(answer.c_str());
@@ -499,22 +516,35 @@ void my_loop(void *param) {
 			ta_tmp_show(show_proced ? "显示拼音处理结果: 1" : "显示拼音处理结果: 0");
 		} else if (proc_key.length() >= 3 && proc_key.startsWith("$S") && proc_key.substring(2).toInt() > 0 && proc_key.substring(2).toInt() <= MAX_CHAT_WINDOW) {
 			if (lvgl_mux_lock()) { // 上锁
-				chat_windows[chat_window_select].ta_text = lv_textarea_get_text(ta);
-				chat_windows[chat_window_select].main_label_text = lv_label_get_text(main_label);
+				// 保存当前窗口 所有状态
+				current_window.ta_text = lv_textarea_get_text(ta);
+				current_window.main_label_text = lv_label_get_text(main_label);
+				current_window.ta_pos = lv_textarea_get_cursor_pos(ta);
+				current_window.main_label_pos = lv_obj_get_scroll_y(main_panel);
 				
 				lv_textarea_set_text(ta, 
-					(String("当前对话窗口: ") + (uint16_t)(chat_window_select+1) + " -> " + 
-					proc_key.substring(2).toInt()).c_str()
+					(String("当前对话窗口: ") + (uint16_t)(chat_window_select+1) + 
+					" -> " + proc_key.substring(2).toInt()).c_str()
 				);
-				lvgl_mutex_unlock(); // 解锁
-
+				
 				chat_window_select = proc_key.substring(2).toInt() - 1;
-				main_label_set_text(chat_windows[chat_window_select].main_label_text.c_str());
+
+				// 切换到新窗口 main_label的状态
+				lv_label_set_text(main_label, current_window.main_label_text.c_str());
+				lv_obj_scroll_to_y(main_panel, current_window.main_label_pos, LV_ANIM_ON);
+				Serial.println(current_window.main_label_pos);
+				lvgl_mutex_unlock(); // 解锁
 			}
 
 			vTaskDelay(700 / portTICK_PERIOD_MS);
 			
-			ta_set_text(chat_windows[chat_window_select].ta_text.c_str());
+			// 切换到新窗口 ta的状态
+			if (lvgl_mux_lock()) { // 上锁
+				lv_textarea_set_text(ta, current_window.ta_text.c_str());
+				lv_textarea_set_cursor_pos(ta, current_window.ta_pos);
+				lvgl_mutex_unlock(); // 解锁
+			}
+			
 		} else if (proc_key.length() >= 2 && proc_key.startsWith("$") && proc_key.substring(1).toInt() > 0 && proc_key.substring(1).toInt() <= TEXT_SHORTCUT_SIZE) {
 			ta_add_text(TEXT_SHORTCUT[ proc_key.substring(1).toInt() - 1 ]);
 		} else if (proc_key == "$10") {
@@ -590,17 +620,16 @@ void my_loop(void *param) {
 			ta_add_text(proc_key.c_str());
 		}
 
-		if (digitalRead(0) == LOW) {
-			vTaskDelay(15 / portTICK_PERIOD_MS);
-			if (digitalRead(0) == HIGH) continue;
-
-			Serial.println("Wait for recording");
-		}
+		// if (digitalRead(0) == LOW) {
+		// 	vTaskDelay(15 / portTICK_PERIOD_MS);
+		// 	if (digitalRead(0) == HIGH) continue;
+		// 	Serial.println("Wait for recording");
+		// }
 
 		client.poll(); // 处理接收的消息
 		
-		// 只保留 串口最后 1 个字符
-		while (Serial1.available() > 1) Serial1.read();
+		// 清空串口
+		while (Serial1.available()) Serial1.read();
 // 		vTaskDelay(1 / portTICK_PERIOD_MS);
 	}
 }
@@ -798,14 +827,14 @@ void print_heap_free() {
  */
 void addMessageToHistory(const char* role, const String content) {
     // 如果历史记录已满，则移除最早的一条用户和助手消息
-    if (chat_windows[chat_window_select].chatHistory.size() >= (MAX_MESSAGES * 2 + 1)) {
-		chat_windows[chat_window_select].chatHistory.erase(
-			chat_windows[chat_window_select].chatHistory.begin()+1,
-			chat_windows[chat_window_select].chatHistory.begin()+2
+    if (current_window.chatHistory.size() >= (MAX_MESSAGES * 2 + 1)) {
+		current_window.chatHistory.erase(
+			current_window.chatHistory.begin()+1,
+			current_window.chatHistory.begin()+2
 		);
     }
     // 将消息以JSON字符串的形式存入数组
-    chat_windows[chat_window_select].chatHistory.push_back(
+    current_window.chatHistory.push_back(
 		String("{\"role\":\"") + role + "\",\"content\":\"" + content + "\"}"
 	);
 }
@@ -858,7 +887,7 @@ int8_t getAPIanswer(const char* _SYSTEM_PROMPT, const String& _userPrompt, const
 
 	if (useHistory) {
 		// 如果是第一次对话，先加入系统提示词
-		if (chat_windows[chat_window_select].chatHistory.empty()) {
+		if (current_window.chatHistory.empty()) {
 			addMessageToHistory("system", _SYSTEM_PROMPT);
 		}
 		
@@ -866,7 +895,7 @@ int8_t getAPIanswer(const char* _SYSTEM_PROMPT, const String& _userPrompt, const
 		addMessageToHistory("user", _userPrompt);
 
 		// 将历史记录中的每一条消息解析并添加到JSON数组中
-		for (String tmp : chat_windows[chat_window_select].chatHistory) {
+		for (String tmp : current_window.chatHistory) {
 			JsonDocument msgDoc;
 			DeserializationError error = deserializeJson(msgDoc, tmp);
 			if (!error) doc["input"]["messages"].add(msgDoc.as<JsonObject>());
@@ -939,7 +968,7 @@ int8_t getAPIanswer(const char* _SYSTEM_PROMPT, const String& _userPrompt, const
 
 // 重置对话历史
 void reset_chat_history() {
-    chat_windows[chat_window_select].chatHistory.clear();
+    current_window.chatHistory.clear();
 }
 
 // // 鼠标回调
