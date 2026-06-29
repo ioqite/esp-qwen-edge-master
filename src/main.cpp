@@ -65,8 +65,8 @@ JsonDocument tmp_doc;   // 临时 JSON 对象
 int eventIdCounter = 0; // 事件ID计数器
 
 // 临时文本
-const char* ta_tmp_text = "";
-const char* main_label_tmp_text = "";
+String ta_tmp_text = "";
+String main_label_tmp_text = "";
 
 // 状态变量
 bool transferring_key = 0;     // 开始接收新的键 (有的键是多字母的)
@@ -227,7 +227,7 @@ void ta_tmp_save() {
 // 恢复 ta 上的文本
 void ta_tmp_recover() {
 	if (lvgl_mux_lock()) { // 上锁
-		lv_textarea_set_text(ta, ta_tmp_text);
+		lv_textarea_set_text(ta, ta_tmp_text.c_str());
 		lvgl_mutex_unlock(); // 解锁
 	}
 }
@@ -241,7 +241,7 @@ void ta_tmp_show(const char* text, uint16_t delay_ms = 700) {
 
 	vTaskDelay(delay_ms / portTICK_PERIOD_MS);
 
-	ta_set_text(ta_tmp_text);
+	ta_set_text(ta_tmp_text.c_str());
 }
 
 // ============== main_label 操作 ===============
@@ -271,7 +271,7 @@ void main_label_tmp_save() {
 // 恢复 main_label 上的文本
 void main_label_tmp_recover() {
 	if (lvgl_mux_lock()) { // 上锁
-		lv_label_set_text(main_label, main_label_tmp_text);
+		lv_label_set_text(main_label, main_label_tmp_text.c_str());
 		lvgl_mutex_unlock(); // 解锁
 	}
 }
@@ -285,7 +285,7 @@ void main_label_tmp_show(const char* text, uint16_t delay_ms = 700) {
 
 	vTaskDelay(delay_ms / portTICK_PERIOD_MS);
 
-	main_label_set_text(main_label_tmp_text);
+	main_label_set_text(main_label_tmp_text.c_str());
 }
 
 // 检查是否有按键按下
