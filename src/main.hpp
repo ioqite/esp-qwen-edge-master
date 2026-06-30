@@ -69,7 +69,6 @@
 #define EXAMPLE_PIN_NUM_LCD_CS 45   // LCD 片选 引脚
 #define EXAMPLE_PIN_NUM_LCD_BL 1    // LCD 背光 引脚 (非LEDC通道)
 // 背光 LEDC 参数
-#define LEDC_CHANNEL          0     // LEDC 通道 (非GPIO引脚)
 #define LEDC_FREQ             5000  // LEDC 频率
 #define LEDC_TIMER_10_BIT     10    // LEDC 定时器精度
 #define LEDC_DEFAULT_DUTY     80    // LEDC 默认占空比 (0-100)

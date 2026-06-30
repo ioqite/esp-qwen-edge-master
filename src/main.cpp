@@ -719,9 +719,8 @@ void getAnswer(String& _user_prompt) {
 	if (_user_prompt.startsWith("-bl=")) {
 		ledc_duty = _user_prompt.substring(_user_prompt.indexOf("=") + 1).toDouble();
 		ledc_duty = constrain(ledc_duty, 0, 100);
-		ledcWrite(LEDC_CHANNEL , ledc_duty ? (1 << LEDC_TIMER_10_BIT) / 100 * ledc_duty : 0.2);
+		ledcWrite(EXAMPLE_PIN_NUM_LCD_BL , ledc_duty ? (1 << LEDC_TIMER_10_BIT) / 100 * ledc_duty : 0.2);
 		answer = "背光 亮度: " + String(ledc_duty);
-		Serial.println(answer);
 		return;
 	}
 	if (_user_prompt == "-rst") {ESP.restart();}
@@ -751,7 +750,7 @@ void getAnswer(String& _user_prompt) {
 		answer = "WiFi ..";
 		return;
 	}
-	if (_user_prompt.startsWith("-uart=")) {
+	if (_user_prompt.startsWith("-uart")) {
 		// t = _user_prompt.substring(_user_prompt.indexOf("=") + 1);
 		answer = "无";
 		return;
