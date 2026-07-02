@@ -3,10 +3,7 @@
 
 // 必要
 #include <Arduino.h>
-#include <string>
-#include "esp_task_wdt.h"
-#include <pthread.h>
-#include "time.h"
+
 // API请求 相关
 #include <vector>
 #include <WiFi.h>
@@ -33,6 +30,13 @@
 #include <base64.h>
 #include <driver/i2s.h>
 #include <ArduinoWebsockets.h>
+// 其他
+#include <string>
+#include "esp_task_wdt.h"
+#include <pthread.h>
+#include "time.h"
+#include "ArduinoCalc.hpp"
+
 
 // ###################### API #########################
 #define API_ENDPOINT "https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation"
@@ -171,9 +175,6 @@ void main_label_tmp_recover();
 // 在 main_label 上临时显示文本
 void main_label_tmp_show(const char* text, uint16_t delay_ms);
 
-// 检查是否有按键按下
-bool check_key();
-
 // // 鼠标回调
 // void my_input_read(lv_indev_drv_t * drv, lv_indev_data_t*data);
 
@@ -227,8 +228,13 @@ void reset_chat_history();
 // 初始化 I2S
 void setupI2S();
 
-// ############### 其他 ################
-bool check_key();
+// ################## 其他 ###################
+
+// 检查是否有按键按下, 0=无, 1=有
+bool check_key(bool use_filter, const char *key);
+
+// 读取按键输入
+String read_key();
 
 // 初始化 SD卡
 void init_SDcard();

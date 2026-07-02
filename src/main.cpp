@@ -97,9 +97,10 @@ String proced;
 // 用户提示词
 String user_prompt = "";
 
+bool bypass_proc = 0;   // 是否跳过 拼音预处理,       由 &2 键切换
 bool show_proced = 0;   // 是否显示 预处理过的 提示词, 由 &3 键切换
-uint8_t bypass_proc = 0; // 是否跳过 拼音预处理, 由 &2 键切换
-// bool enable_search = 0; // 是否启用 联网搜索
+bool calc_mode   = 0;   // 是否启用 计算器模式,       由 &4 键切换
+// bool enable_search = 0; // 是否启用 联网搜索,      未实现
 
 // ###################### other #########################
 // 储存 时间信息
@@ -305,9 +306,10 @@ void main_label_tmp_show(const char* text, uint16_t delay_ms = 700) {
 	}
 }
 
-// 检查是否有按键按下
-bool check_key() {
+// 检查是否有按键按下, 0=无, 1=有
+bool check_key(bool use_filter = 0, const char *key = NULL) {
 	if (!Serial1.available()) return 0;
+	if (use_filter && read_key() != key) return 0;
 	while (Serial1.available()) Serial1.read();
 	return 1;
 }
@@ -514,6 +516,9 @@ void my_loop(void *param) {
 		} else if (proc_key == "&3") {
 			show_proced = !show_proced;
 			ta_tmp_show(show_proced ? "显示拼音处理结果: 1" : "显示拼音处理结果: 0");
+		} else if (proc_key == "&4") {
+			calc_mode = !calc_mode;
+			ta_tmp_show(calc_mode ? "计算器模式: 1" : "计算器模式: 0");
 		} else if (proc_key.length() >= 3 && proc_key.startsWith("$S") && proc_key.substring(2).toInt() > 0 && proc_key.substring(2).toInt() <= MAX_CHAT_WINDOW) {
 			if (lvgl_mux_lock()) { // 上锁
 				// 保存当前窗口 所有状态
@@ -544,7 +549,6 @@ void my_loop(void *param) {
 				lv_textarea_set_cursor_pos(ta, current_window.ta_pos);
 				lvgl_mutex_unlock(); // 解锁
 			}
-			
 		} else if (proc_key.length() >= 2 && proc_key.startsWith("$") && proc_key.substring(1).toInt() > 0 && proc_key.substring(1).toInt() <= TEXT_SHORTCUT_SIZE) {
 			ta_add_text(TEXT_SHORTCUT[ proc_key.substring(1).toInt() - 1 ]);
 		} else if (proc_key == "$10") {
@@ -584,8 +588,7 @@ void my_loop(void *param) {
 
 				if (millis() - start_time > 240) { // 每 240ms 检查一次是否松开录音按钮（按键发送间隔是 240ms）
 					start_time = millis();
-					if (!Serial1.available()) break;
-					while (Serial1.available()) char t = Serial1.read();
+					if (!check_key(1, "&1")) break;
 				}
 			}
 			
@@ -720,15 +723,15 @@ void getAnswer(String& _user_prompt) {
 		ledc_duty = _user_prompt.substring(_user_prompt.indexOf("=") + 1).toDouble();
 		ledc_duty = constrain(ledc_duty, 0, 100);
 		ledcWrite(EXAMPLE_PIN_NUM_LCD_BL , ledc_duty ? (1 << LEDC_TIMER_10_BIT) / 100 * ledc_duty : 0.2);
-		answer = "背光 亮度: " + String(ledc_duty);
+		answer = "背光亮度: " + String(ledc_duty);
 		return;
 	}
-	if (_user_prompt == "-rst") {ESP.restart();}
+	if (_user_prompt == "-rst") { ESP.restart(); }
 	if (_user_prompt == "-ds") {
 		esp_deep_sleep_start();
 	}
 	if (_user_prompt == "-dsg") {
-		esp_sleep_enable_ext0_wakeup(GPIO_NUM_0, LOW);
+		esp_sleep_enable_ext0_wakeup(GPIO_NUM_21, HIGH);
 		esp_deep_sleep_start();
 	}
 	if (_user_prompt == "-sd") {
@@ -751,7 +754,17 @@ void getAnswer(String& _user_prompt) {
 		return;
 	}
 	if (_user_prompt.startsWith("-uart")) {
-		// t = _user_prompt.substring(_user_prompt.indexOf("=") + 1);
+		main_label_tmp_save();
+		// uint8_t rx_pin = _user_prompt.substring(_user_prompt.indexOf("=") + 1);
+		// uint8_t tx_pin = _user_prompt.substring(_user_prompt.indexOf("=") + 1);
+		Serial2.begin(115200, SERIAL_8N1, 16, 17); // 初始化 串口
+		main_label_set_text("");
+		uint32_t start_time = millis();
+		while (1) {
+			if (Serial2.available()) main_label_add_text((const char *)Serial2.read());
+			if (check_key(1, "$12")) break;
+			if (Serial1.available()) Serial2.write(read_key().c_str());
+		}
 		answer = "无";
 		return;
 	}
@@ -764,9 +777,24 @@ void getAnswer(String& _user_prompt) {
 	answer = "";
 	Serial.println("_user_prompt: " + _user_prompt);
 
-	if (bypass_proc == 1) {
+	if (calc_mode == 1) {  // 计算器模式
+		double result;
+        String errMsg;  // 用于接收错误信息的字符串
+        bool success = calculate(_user_prompt, result, errMsg);
+        
+        if (success) {
+            Serial.println("输入: " + _user_prompt);
+            Serial.println("结果: " + String(result, 4)); // 输出结果，保留4位小数
+			answer = "结果: " + String(result, 4);
+        } else {
+            // 如果失败，统一输出累积的错误信息
+            Serial.println("输入: " + _user_prompt);
+            Serial.print(errMsg);
+			answer = errMsg;
+        }
+	} else if (bypass_proc == 1) {  // 跳过 拼音预处理
 		getAPIanswer(SYS_PROMPT_NO_PROC, _user_prompt, MAIN_MODEL_NAME, answer, true);
-	} else if (bypass_proc == 0) {
+	} else  if (bypass_proc == 0) {  // 默认模式
 		if (getAPIanswer(PROC_SYS_PROMPT, _user_prompt, PROC_MODEL_NAME, proced, false) != 0) {
 			answer = proced;
 			return;
@@ -785,6 +813,7 @@ void getAnswer(String& _user_prompt) {
 	
 	// bypass_proc = 0;
 	// show_proced = 0;
+	// calc_mode   = 0;
 }
 
 // 主循环 (Core 1)

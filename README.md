@@ -4,7 +4,7 @@
 ### 当前文档未完善 ###
 
 ## 项目介绍 
-该项目是一个基于ESP32-S3的智能终端设备，集成了2英寸LCD显示屏、语音识别（STT）(正在实现)、IMU传感器，并通过 阿里云Qwen大模型 实现AI对话功能, 可选择不同模型。支持WiFi连接、SD卡读取、LVGL图形界面和拼音输入法(正在实现)。
+该项目是一个基于ESP32-S3的智能终端设备，集成了2英寸LCD显示屏, 已实现语音识别（ASR）、IMU传感器，并通过 阿里云Qwen大模型 实现AI对话功能, 可选择不同模型。支持WiFi连接、SD卡读取、LVGL图形界面和拼音输入法(正在实现)。
 
 ## 本项目可供自行DIY, 如要复刻可根据以下步骤 ##
 
@@ -30,10 +30,17 @@ git clone https://github.com/ioqite/esp-qwen-edge-master.git
 
 ### 4. 配置变量: ###
 
+将 `src/user_config-template.h` 头文件复制一份 并 命名为 `user_config.h`，然后再修改
+
 - `QWEN_API_SECRET_KEY`: 从阿里云Qwen大模型获取的API密钥
 - `ssids` 和 `passwords`: 可供启动时选择的 WiFi 的 SSID 和 密码
 
 ### 5. 编译烧录 ###
+
+```shell
+platformio  upload
+```
+
 
 ### 未完待续 ###
 
