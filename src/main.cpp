@@ -16,8 +16,8 @@ void lvgl_mutex_unlock() { xSemaphoreGiveRecursive(lvgl_mutex); }
 bool spi_mux_lock() { return xSemaphoreTakeRecursive(spi_mux, portMAX_DELAY) == pdTRUE; }
 void spi_mux_unlock() { xSemaphoreGiveRecursive(spi_mux); }
 
-// 从 SD卡 /lcd-t.txt 读取的文本
-String sd_text = "";
+// SD卡状态 (正常则为空, 否则为 错误信息)
+String sd_status = "";
 
 double ledc_duty = LEDC_DEFAULT_DUTY;	// 默认占空比
 
@@ -106,6 +106,7 @@ bool calc_mode   = 0;   // 是否启用 计算器模式,       由 &4 键切换
 // 储存 时间信息
 tm timeinfo;
 
+SPIClass sd_spi_bus(FSPI);
 // 屏幕, More: https://github.com/moononournation/Arduino_GFX/wiki/
 Arduino_DataBus *bus = new Arduino_ESP32SPI(EXAMPLE_PIN_NUM_LCD_DC, EXAMPLE_PIN_NUM_LCD_CS, EXAMPLE_PIN_NUM_LCD_SCLK, EXAMPLE_PIN_NUM_LCD_MOSI, EXAMPLE_PIN_NUM_LCD_MISO, FSPI /* spi_num */, true);
 Arduino_GFX *gfx = new Arduino_ST7789(bus, EXAMPLE_PIN_NUM_LCD_RST, EXAMPLE_LCD_ROTATION, true /* IPS */, EXAMPLE_LCD_H_RES, EXAMPLE_LCD_V_RES);
@@ -731,21 +732,48 @@ void getAnswer(String& _user_prompt) {
 		esp_deep_sleep_start();
 	}
 	if (_user_prompt == "-dsg") {
-		esp_sleep_enable_ext0_wakeup(GPIO_NUM_21, HIGH);
+		esp_sleep_enable_ext0_wakeup((gpio_num_t)BTN_PIN_1, HIGH);
 		esp_deep_sleep_start();
 	}
-	if (_user_prompt == "-sd") {
-		// if (spi_mux_lock()) {   // 加锁
-		// 	sd_text = "";
-		// 	File file = SD.open("/lcd-t.txt");
-		// 	if (file.available()) {
-		// 		while (file.available()) sd_text += (char)file.read();
-		// 		file.close();
-		// 	} else Serial.println("Error opening lcd-t.txt");
-		// 	spi_mux_unlock(); // 解锁
-		// }
-		answer = sd_text;
-		Serial.println(answer);
+	if (_user_prompt.startsWith("-sd")) {
+		if (sd_status.length() != 0) {
+			answer = sd_status;
+			return;
+		}
+		answer = "";
+
+		// 解析用户 (是否) 要读取的文件名
+		String read_file_name;
+		if (_user_prompt.indexOf('=') == 3 && _user_prompt.length() > 4) { // -sd=xxx -> 读取 SD 卡根目录下 xxx 文件
+			read_file_name = _user_prompt.substring(_user_prompt.indexOf("=") + 1);
+		}
+
+		// 否则 解析用户 归递列出的层数
+		else if (_user_prompt.indexOf('/') == 3) {
+			uint8_t levels = 3;
+			if (_user_prompt.length() > 4) { // -sd/x -> 归递列出 SD卡下 x层 目录与文件
+				levels = (_user_prompt.substring(_user_prompt.indexOf('/') + 1)).toInt();
+			} // else: -sd/ -> 归递列出 SD卡下 3层 目录与文件
+
+			if (spi_mux_lock()) {   // 加锁
+				listDir(SD, "/", levels, answer);
+				spi_mux_unlock(); // 解锁
+			}
+			return;
+		} else read_file_name = "lcd-t.txt";
+		
+		// 读取 SD卡文件 内容
+		if (spi_mux_lock()) {   // 加锁
+			File file = SD.open("/" + read_file_name, FILE_READ);
+			if (file.available()) {
+				while (file.available()) answer += (char)file.read();
+				file.close();
+			} else {
+				Serial.printf("无法读取 %s", read_file_name.c_str());
+				answer = "无法读取 " + read_file_name;
+			}
+			spi_mux_unlock(); // 解锁
+		}
 		return;
 	}
 	if (_user_prompt == "-wifi") {
@@ -757,7 +785,7 @@ void getAnswer(String& _user_prompt) {
 		main_label_tmp_save();
 		// uint8_t rx_pin = _user_prompt.substring(_user_prompt.indexOf("=") + 1);
 		// uint8_t tx_pin = _user_prompt.substring(_user_prompt.indexOf("=") + 1);
-		Serial2.begin(115200, SERIAL_8N1, 16, 17); // 初始化 串口
+		Serial2.begin(115200, SERIAL_8N1, 6, 16); // 初始化 串口
 		main_label_set_text("");
 		uint32_t start_time = millis();
 		while (1) {
@@ -819,13 +847,11 @@ void getAnswer(String& _user_prompt) {
 // 主循环 (Core 1)
 void loop() {
 	if (lvgl_mux_lock()) { // 上锁
-		// Serial.println("lv_timer begin");
 		lv_timer_handler(); // LVGL任务处理
 		lvgl_mutex_unlock();
 	}
 
 	if (spi_mux_lock()) {   // 加锁
-		// Serial.println("spi lock begin");
 #if (LV_COLOR_16_SWAP != 0)
  		gfx->draw16bitBeRGBBitmap(0, 0, (uint16_t *)disp_draw_buf, screenWidth, screenHeight);
 #else
@@ -833,7 +859,6 @@ void loop() {
 #endif
 		spi_mux_unlock(); // 解锁
 	}
-	// Serial.println("spi lock end");
 	
 	my_read_imu();
   	vTaskDelay(1 / portTICK_PERIOD_MS);
@@ -1083,12 +1108,8 @@ void send_key_to_ta(uint32_t key) {
 void hardware_init() {
 	// 鼠标左键 (没有右键)
     pinMode(0, INPUT_PULLUP);
-// 
-// 	pinMode(RECORD_BTN, INPUT_PULLDOWN);
-// 	pinMode(SEND_BTN, INPUT_PULLDOWN);
-
-	// 初始化 SD 卡
-	init_SDcard();
+	pinMode(BTN_PIN_1, INPUT_PULLDOWN);
+	pinMode(BTN_PIN_2, INPUT_PULLDOWN);
 	
 	// 初始化 Display
 	if (spi_mux_lock()) {   // 加锁
@@ -1153,6 +1174,9 @@ void hardware_init() {
 		lv_disp_drv_register(&disp_drv);
 	}
 
+	// 初始化 SD 卡
+	init_SDcard();
+
 	// 初始化 IMU
 	Wire.begin(48, 47);
   	Wire.setClock(400000); // 400 kHz clock
@@ -1161,7 +1185,6 @@ void hardware_init() {
 		Serial.println("Error initializing IMU: " + err);
 		// while (true) vTaskDelay(10000);
 	}
-
 	
 	// // 初始化 鼠标设备(IMU + GPIO 0 模拟的) 与 鼠标指针 
 	// static lv_indev_drv_t indev_drv;
@@ -1175,51 +1198,54 @@ void hardware_init() {
 }
 
 // 列出目录下的所有文件和子目录
-void listDir(fs::FS &fs, const char *dirname, uint8_t levels) {
-	Serial.printf("List directory: %s\r\n", dirname);
-
+void listDir(fs::FS &fs, const char *dirname, uint8_t levels, String& response) {
 	File root = fs.open(dirname);
 	if (!root) {
-		Serial.println("Failed to open directory");
+		response += "Failed to open directory";
 		return;
 	}
 	if (!root.isDirectory()) {
-		Serial.println("Not a directory");
+		response += "Not a directory";
 		return;
 	}
+
+	response += String("List: ") + dirname + "\r\n";
 
 	File file = root.openNextFile();
 	while (file) {
 		if (file.isDirectory()) {
-			Serial.print("  Dir : ");
-			Serial.println(file.name());
+			response += "  Dir: ";
+			response += file.name();
+			response += "\r\n";
 			if (levels) {
-				listDir(fs, file.path(), levels - 1);
+				listDir(fs, file.path(), levels - 1, response);
 			}
 		} else {
-			Serial.print("  File: ");
-			Serial.print(file.name());
-			Serial.print("  Size: ");
-			Serial.println(file.size());
+			response += "  File: ";
+			response += file.name();
+			response += "  Size: ";
+			response += file.size();
+			response += "\r\n";
 		}
 		file = root.openNextFile();
 	}
-	Serial.println();
+	response += "\r\n";
 }
 
 // 初始化 SD 卡
 void init_SDcard() {
 	if (spi_mux_lock()) {   // 加锁
-		SPIClass sd_spi_bus(FSPI);
 		sd_spi_bus.begin(SD_SCK, SD_MISO, SD_MOSI, -1);
 		if (!SD.begin(SD_CS, sd_spi_bus)) {
 			Serial.println("Card Mount Failed");
+			sd_status = "Card Mount Failed";
 			return;
 		}
 		uint8_t cardType = SD.cardType();
 
 		if (cardType == CARD_NONE) {
 			Serial.println("No SD card attached");
+			sd_status = "No SD card attached";
 			return;
 		}
 
@@ -1237,19 +1263,13 @@ void init_SDcard() {
 		Serial.printf("Total space: %lluMiB\r\n",  SD.totalBytes() / (1024 * 1024));
 		Serial.printf("Used space: %lluMiB\r\n",   SD.usedBytes()  / (1024 * 1024));
 		
-		listDir(SD, "/", 2);
-
-		sd_text = "";
-		File file = SD.open("/lcd-t.txt");
-		if (file.available()) {
-			while (file.available()) sd_text += (char)file.read();
-			file.close();
-		} else Serial.println("Error opening lcd-t.txt");
+		// String list_res = "";
+		// listDir(SD, "/", 3, list_res);
+		// Serial.println(list_res);
 
 		spi_mux_unlock();   // 解锁
 	}
 }
-
 
 // 初始化 I2S
 void setupI2S() {

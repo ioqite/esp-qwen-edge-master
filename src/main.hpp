@@ -45,8 +45,8 @@
 // ###################### 引脚定义 及 设置参数 #########################
 
 // 按键引脚定义
-#define RECORD_BTN 11  // 录音按钮引脚
-#define SEND_BTN 13    // 发送按钮引脚
+#define BTN_PIN_1 11
+#define BTN_PIN_2 13
 
 // SD卡 引脚定义
 #define SD_SCK 39
@@ -239,8 +239,8 @@ String read_key();
 // 初始化 SD卡
 void init_SDcard();
 
-// 列出 SD卡目录 及 文件
-void listDir(fs::FS &fs, const char *dirname, uint8_t levels);
+// 列出目录下的所有文件和子目录
+void listDir(fs::FS &fs, const char *dirname, uint8_t levels, String& response);
 
 // 向 Qwen-ASR 发送音频数据
 void asr_send(uint16_t* pcm_data, uint32_t size);
