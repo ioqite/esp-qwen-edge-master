@@ -65,17 +65,19 @@
 #define CHUNK_SIZE 2048
 
 // LCD 引脚定义
-#define EXAMPLE_PIN_NUM_LCD_SCLK 39  // LCD 时钟 引脚
-#define EXAMPLE_PIN_NUM_LCD_MOSI 38  // LCD MOSI 引脚
-#define EXAMPLE_PIN_NUM_LCD_MISO 40 // LCD MISO 引脚
-#define EXAMPLE_PIN_NUM_LCD_DC 42   // LCD 数据/指令 引脚
-#define EXAMPLE_PIN_NUM_LCD_RST -1  // LCD 重启 引脚
-#define EXAMPLE_PIN_NUM_LCD_CS 45   // LCD 片选 引脚
-#define EXAMPLE_PIN_NUM_LCD_BL 1    // LCD 背光 引脚 (非LEDC通道)
+#define LCD_SCLK 39  // LCD 时钟 引脚
+#define LCD_MOSI 38  // LCD MOSI 引脚
+#define LCD_MISO 40 // LCD MISO 引脚
+#define LCD_DC 42   // LCD 数据/指令 引脚
+#define LCD_RST -1  // LCD 重启 引脚
+#define LCD_CS 45   // LCD 片选 引脚
+#define LCD_BL 1    // LCD 背光 引脚 (非LEDC通道)
 // 背光 LEDC 参数
 #define LEDC_FREQ             5000  // LEDC 频率
 #define LEDC_TIMER_10_BIT     10    // LEDC 定时器精度
 #define LEDC_DEFAULT_DUTY     80    // LEDC 默认占空比 (0-100)
+// 其他
+#define BAT_ADC   5
 // LVGL 屏幕参数
 #define EXAMPLE_LCD_ROTATION 3    // LCD 旋转次数
 #define EXAMPLE_LCD_H_RES 240     // LCD 水平分辨率

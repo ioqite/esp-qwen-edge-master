@@ -2,12 +2,11 @@
 
 #include "main.hpp"
 
-TaskHandle_t TASK_Handle_wifi = NULL;
-TaskHandle_t TASK_HandleOne = NULL;
+TaskHandle_t TASK_Handle_WiFi = NULL;
+TaskHandle_t TASK_Handle_My_Loop = NULL;
 
 // LVGL 线程锁
 SemaphoreHandle_t lvgl_mutex = xSemaphoreCreateRecursiveMutex();
-// static pthread_mutex_t lvgl_mutex = PTHREAD_MUTEX_INITIALIZER;
 // SPI 线程锁
 SemaphoreHandle_t spi_mux = xSemaphoreCreateRecursiveMutex();
 
@@ -42,7 +41,6 @@ String proc_key;
 // 定义 LVGL对象 和 显示的文本
 lv_obj_t * main_panel;
 lv_obj_t * main_label;
-String main_label_text = "";
 lv_obj_t * ta;
 lv_obj_t * g_kb;
 
@@ -108,8 +106,8 @@ tm timeinfo;
 
 SPIClass sd_spi_bus(FSPI);
 // 屏幕, More: https://github.com/moononournation/Arduino_GFX/wiki/
-Arduino_DataBus *bus = new Arduino_ESP32SPI(EXAMPLE_PIN_NUM_LCD_DC, EXAMPLE_PIN_NUM_LCD_CS, EXAMPLE_PIN_NUM_LCD_SCLK, EXAMPLE_PIN_NUM_LCD_MOSI, EXAMPLE_PIN_NUM_LCD_MISO, FSPI /* spi_num */, true);
-Arduino_GFX *gfx = new Arduino_ST7789(bus, EXAMPLE_PIN_NUM_LCD_RST, EXAMPLE_LCD_ROTATION, true /* IPS */, EXAMPLE_LCD_H_RES, EXAMPLE_LCD_V_RES);
+Arduino_DataBus *bus = new Arduino_ESP32SPI(LCD_DC, LCD_CS, LCD_SCLK, LCD_MOSI, LCD_MISO, FSPI /* spi_num */, true);
+Arduino_GFX *gfx = new Arduino_ST7789(bus, LCD_RST, EXAMPLE_LCD_ROTATION, true /* IPS */, EXAMPLE_LCD_H_RES, EXAMPLE_LCD_V_RES);
 
 void my_disp_flush(lv_disp_drv_t *disp_drv, const lv_area_t *area, lv_color_t *color_p) { lv_disp_flush_ready(disp_drv); }
 
@@ -168,10 +166,10 @@ void setup() {
 		10000,        // 堆栈大小
 		NULL,         // 参数
 		1,            // 优先级
-		&TASK_HandleOne,  // 任务句柄
+		&TASK_Handle_My_Loop,  // 任务句柄
 		0             // 核心编号 (0或1)
 	);
-	// esp_task_wdt_delete(TASK_HandleOne);
+	// esp_task_wdt_delete(TASK_Handle_My_Loop);
 }
 
 // 读取按键输入
@@ -255,15 +253,15 @@ void ta_tmp_show(const char* text, uint16_t delay_ms = 700) {
 // ============== main_label 操作 ===============
 // 添加文本到 main_label 上
 void main_label_add_text(const char* text) {
-	main_label_text += text;
+	current_window.main_label_text += text;
 	if (lvgl_mux_lock()) { // 上锁
-		lv_label_set_text(main_label, main_label_text.c_str());
+		lv_label_set_text(main_label, current_window.main_label_text.c_str());
 		lvgl_mutex_unlock();
 	}
 }
 // 设置 main_label 上的文本
 void main_label_set_text(const char* text) {
-	main_label_text = text;
+	current_window.main_label_text = text;
 	if (lvgl_mux_lock()) { // 上锁
 		lv_label_set_text(main_label, text);
 		lvgl_mutex_unlock();
@@ -308,28 +306,14 @@ void main_label_tmp_show(const char* text, uint16_t delay_ms = 700) {
 }
 
 // 检查是否有按键按下, 0=无, 1=有
-bool check_key(bool use_filter = 0, const char *key = NULL) {
+bool check_key(bool use_filter = 0, const char *filter_key = NULL) {
 	if (!Serial1.available()) return 0;
-	if (use_filter && read_key() != key) return 0;
+	if (use_filter && read_key() != filter_key) return 0;
 	while (Serial1.available()) Serial1.read();
 	return 1;
 }
 
-// 等待 WiFi 连接
-void wait_wifi_connection(void *param) {
-	connecting_wifi = true;
-	Serial.print("连接WiFi中 ..");
-	main_label_set_text("#1058b1 连接WiFi中 ..");
-	while (WiFi.status() != WL_CONNECTED) {
-		Serial.print('.');
-		main_label_add_text(".");
-		vTaskDelay(700 / portTICK_PERIOD_MS);
-	}
-	// Serial.println(WiFi.localIP());
-	connecting_wifi = false;
-	Serial.println(" OK");
-	main_label_add_text("# #3add70 OK#");
-
+void sync_sntp() {
 	syncing_sntp = true;
 	// SNTP 时间同步
 	Serial.print("使用 SNTP 同步时间 ...");
@@ -343,11 +327,29 @@ void wait_wifi_connection(void *param) {
 	syncing_sntp = false;
 	Serial.println(" OK");
 	main_label_add_text("# #3add70 OK#");
-	vTaskDelete(TASK_Handle_wifi);
+}
+
+// 等待 WiFi 连接
+void wait_wifi_connection(void *param) {
+	Serial.print("连接WiFi中 ..");
+	main_label_set_text("#1058b1 连接WiFi中 ..");
+	while (WiFi.status() != WL_CONNECTED) {
+		Serial.print('.');
+		main_label_add_text(".");
+		vTaskDelay(700 / portTICK_PERIOD_MS);
+	}
+	// Serial.println(WiFi.localIP());
+	connecting_wifi = false;
+	Serial.println(" OK");
+	main_label_add_text("# #3add70 OK#");
+
+	sync_sntp();
+	vTaskDelete(TASK_Handle_WiFi);
 }
 
 // 选择SSID 并 连接WiFi
 void connect_wifi() {
+	connecting_wifi = true;
 	Serial.println("初始化 WiFi");
 
 	int16_t ssid_num = sizeof(ssids) / sizeof(ssids[0]) - 1;
@@ -358,14 +360,14 @@ void connect_wifi() {
 		while (1) vTaskDelay(10000 / portTICK_PERIOD_MS);
 	}
 	
-	main_label_text = "#0060b9 请选择 WIFI：\n";
+	current_window.main_label_text = "#0060b9 请选择 WIFI：\n";
 	for (int16_t i=1; i<=ssid_num; i++) {
-		main_label_text += i;
-		main_label_text += ": ";
-		main_label_text += ssids[i];
-		main_label_text += "\n";
+		current_window.main_label_text += i;
+		current_window.main_label_text += ": ";
+		current_window.main_label_text += ssids[i];
+		current_window.main_label_text += "\n";
 	}
-	main_label_set_text(main_label_text.c_str());
+	main_label_set_text(current_window.main_label_text.c_str());
 
 	// 等待选择 SSID 并初始化 WiFi
 	while (1) {
@@ -383,7 +385,7 @@ void connect_wifi() {
 				4096,              // 堆栈大小
 				NULL,              // 参数
 				1,                 // 优先级
-				&TASK_Handle_wifi  // 任务句柄
+				&TASK_Handle_WiFi  // 任务句柄
 			);
 			break;
 		}
@@ -669,9 +671,9 @@ void getAnswer(String& _user_prompt) {
 		IMU.getGyro(&gyroData);   // gyroData.gyroX   gyroData.gyroY   gyroData.gyroZ
 		// Serial.println(IMU.getTemp());
 
-		answer = "IMU Temp: " + String(IMU.getTemp());
-		answer += "\r\nAccel:\r\n - X: " + String(accelData.accelX) + "\r\n - Y: " + String(accelData.accelY) + "\r\n - Z: " + String(accelData.accelZ);
-		answer += "\r\nGyro:\r\n - X: " + String(gyroData.gyroX) + "\r\n - Y: " + String(gyroData.gyroY) + "\r\n - Z: " + String(gyroData.gyroZ);
+		answer = "IMU 温度: " + String(IMU.getTemp());
+		answer += "\r\n加速度计:\r\n - X: " + String(accelData.accelX) + "\r\n - Y: " + String(accelData.accelY) + "\r\n - Z: " + String(accelData.accelZ);
+		answer += "\r\n陀螺仪:\r\n - X: " + String(gyroData.gyroX) + "\r\n - Y: " + String(gyroData.gyroY) + "\r\n - Z: " + String(gyroData.gyroZ);
 		Serial.println(answer);
 		return;
 	}
@@ -723,17 +725,21 @@ void getAnswer(String& _user_prompt) {
 	if (_user_prompt.startsWith("-bl=")) {
 		ledc_duty = _user_prompt.substring(_user_prompt.indexOf("=") + 1).toDouble();
 		ledc_duty = constrain(ledc_duty, 0, 100);
-		ledcWrite(EXAMPLE_PIN_NUM_LCD_BL , ledc_duty ? (1 << LEDC_TIMER_10_BIT) / 100 * ledc_duty : 0.2);
+		ledcWrite(LCD_BL , ledc_duty ? (1 << LEDC_TIMER_10_BIT) / 100 * ledc_duty : 0.2);
 		answer = "背光亮度: " + String(ledc_duty);
 		return;
 	}
-	if (_user_prompt == "-rst") { ESP.restart(); }
+	if (_user_prompt == "-rst") { esp_restart(); }
 	if (_user_prompt == "-ds") {
 		esp_deep_sleep_start();
 	}
 	if (_user_prompt == "-dsg") {
-		esp_sleep_enable_ext0_wakeup((gpio_num_t)BTN_PIN_1, HIGH);
+		esp_sleep_enable_ext0_wakeup((gpio_num_t)BTN_PIN_2, HIGH);
 		esp_deep_sleep_start();
+	}
+	if (_user_prompt.startsWith("-dst=") && _user_prompt.length() > 5) { // -dst=1000 -> 休眠 1 秒
+		uint64_t time_us = (_user_prompt.substring(_user_prompt.indexOf("=") + 1)).toInt() * 1000;
+		esp_deep_sleep(time_us);
 	}
 	if (_user_prompt.startsWith("-sd")) {
 		if (sd_status.length() != 0) {
@@ -753,6 +759,7 @@ void getAnswer(String& _user_prompt) {
 			uint8_t levels = 3;
 			if (_user_prompt.length() > 4) { // -sd/x -> 归递列出 SD卡下 x层 目录与文件
 				levels = (_user_prompt.substring(_user_prompt.indexOf('/') + 1)).toInt();
+				Serial.println("归递列出 SD卡下 " + String(levels) + "层 目录与文件");
 			} // else: -sd/ -> 归递列出 SD卡下 3层 目录与文件
 
 			if (spi_mux_lock()) {   // 加锁
@@ -760,7 +767,12 @@ void getAnswer(String& _user_prompt) {
 				spi_mux_unlock(); // 解锁
 			}
 			return;
-		} else read_file_name = "lcd-t.txt";
+		} else if (_user_prompt[3] <= 9 && _user_prompt[3] >= 0) { // -sdx -> 读取 SD 卡根目录下 lcd-tx.txt 文件
+			read_file_name = "lcd-t" + String(_user_prompt[3]) + ".txt";
+		}
+		else { // -sd -> 读取 SD 卡根目录下 lcd-t1.txt 文件
+			read_file_name = "lcd-t1.txt";
+		}
 		
 		// 读取 SD卡文件 内容
 		if (spi_mux_lock()) {   // 加锁
@@ -781,19 +793,34 @@ void getAnswer(String& _user_prompt) {
 		answer = "WiFi ..";
 		return;
 	}
-	if (_user_prompt.startsWith("-uart")) {
-		main_label_tmp_save();
+	if (_user_prompt == "-sntp") {
+		sync_sntp();
+		answer = "#10acb1 使用 SNTP 同步时间 ...";
+		return;
+	}
+	if (_user_prompt.startsWith("-ut")) {
 		// uint8_t rx_pin = _user_prompt.substring(_user_prompt.indexOf("=") + 1);
 		// uint8_t tx_pin = _user_prompt.substring(_user_prompt.indexOf("=") + 1);
 		Serial2.begin(115200, SERIAL_8N1, 6, 16); // 初始化 串口
-		main_label_set_text("");
-		uint32_t start_time = millis();
+		main_label_set_text("#10b166 UART 已连接(115200,8N1, RX=6, TX=16)\n按 $12 退出 UART\n");
+		vTaskDelay(80 / portTICK_PERIOD_MS);
+		char c_tmp;
+		String str_tmp;
 		while (1) {
-			if (Serial2.available()) main_label_add_text((const char *)Serial2.read());
-			if (check_key(1, "$12")) break;
-			if (Serial1.available()) Serial2.write(read_key().c_str());
+			if (Serial2.available()) {
+				c_tmp = (char)Serial2.read();
+				main_label_add_text(&c_tmp);
+				// Serial.println("UART2 接收: " + String(c_tmp));
+			}
+			if (Serial1.available()) {
+				str_tmp = read_key();
+				if (str_tmp == "$12") break;
+				Serial2.write(str_tmp.c_str());
+				// Serial.println("UART2 发送: " + str_tmp);
+			}
+			vTaskDelay(1 / portTICK_PERIOD_MS);
 		}
-		answer = "无";
+		answer = "#10b166 UART 已断开";
 		return;
 	}
 
@@ -1126,15 +1153,14 @@ void hardware_init() {
 
 	vTaskDelay(70 / portTICK_PERIOD_MS);
 
-#if (EXAMPLE_PIN_NUM_LCD_BL >= 0)
-// 
-	ledcAttach(EXAMPLE_PIN_NUM_LCD_BL , LEDC_FREQ, LEDC_TIMER_10_BIT);
+#if (LCD_BL >= 0)
+	ledcAttach(LCD_BL , LEDC_FREQ, LEDC_TIMER_10_BIT);
 	// ledcAttach(LEDC_CHANNEL , LEDC_FREQ, LEDC_TIMER_10_BIT);
 	// ledcAttachPin(, LEDC_CHANNEL);
 
-	ledcWrite(EXAMPLE_PIN_NUM_LCD_BL , ledc_duty ? (1 << LEDC_TIMER_10_BIT) / 100 * ledc_duty : 0);
-	// pinMode(EXAMPLE_PIN_NUM_LCD_BL, OUTPUT);
-	// digitalWrite(EXAMPLE_PIN_NUM_LCD_BL, HIGH);
+	ledcWrite(LCD_BL , ledc_duty ? (1 << LEDC_TIMER_10_BIT) / 100 * ledc_duty : 0);
+	// pinMode(LCD_BL, OUTPUT);
+	// digitalWrite(LCD_BL, HIGH);
 #endif
 
 	// 初始化 触摸, 本人没有
