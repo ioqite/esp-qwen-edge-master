@@ -111,7 +111,17 @@ SPIClass sd_spi_bus(FSPI);
 Arduino_DataBus *bus = new Arduino_ESP32SPI(LCD_DC, LCD_CS, LCD_SCLK, LCD_MOSI, LCD_MISO, FSPI /* spi_num */, true);
 Arduino_GFX *gfx = new Arduino_ST7789(bus, LCD_RST, EXAMPLE_LCD_ROTATION, true /* IPS */, EXAMPLE_LCD_H_RES, EXAMPLE_LCD_V_RES);
 
-void my_disp_flush(lv_disp_drv_t *disp_drv, const lv_area_t *area, lv_color_t *color_p) { lv_disp_flush_ready(disp_drv); }
+void my_disp_flush(lv_disp_drv_t *disp_drv, const lv_area_t *area, lv_color_t *color_p) {
+	if (spi_mux_lock()) {   // 加锁
+#if (LV_COLOR_16_SWAP != 0)
+ 		gfx->draw16bitBeRGBBitmap(0, 0, (uint16_t *)disp_draw_buf, screenWidth, screenHeight);
+#else
+ 		gfx->draw16bitRGBBitmap(0, 0, (uint16_t *)disp_draw_buf, screenWidth, screenHeight);
+#endif
+		spi_mux_unlock(); // 解锁
+	}
+	lv_disp_flush_ready(disp_drv);
+}
 
 #if LV_USE_LOG != 0
 void my_print(const char *buf) {
@@ -880,14 +890,14 @@ void loop() {
 		lvgl_mutex_unlock();
 	}
 
-	if (spi_mux_lock()) {   // 加锁
-#if (LV_COLOR_16_SWAP != 0)
- 		gfx->draw16bitBeRGBBitmap(0, 0, (uint16_t *)disp_draw_buf, screenWidth, screenHeight);
-#else
- 		gfx->draw16bitRGBBitmap(0, 0, (uint16_t *)disp_draw_buf, screenWidth, screenHeight);
-#endif
-		spi_mux_unlock(); // 解锁
-	}
+// 	if (spi_mux_lock()) {   // 加锁
+// #if (LV_COLOR_16_SWAP != 0)
+//  		gfx->draw16bitBeRGBBitmap(0, 0, (uint16_t *)disp_draw_buf, screenWidth, screenHeight);
+// #else
+//  		gfx->draw16bitRGBBitmap(0, 0, (uint16_t *)disp_draw_buf, screenWidth, screenHeight);
+// #endif
+// 		spi_mux_unlock(); // 解锁
+// 	}
 	
 	my_read_imu();
   	vTaskDelay(1 / portTICK_PERIOD_MS);
@@ -1145,7 +1155,7 @@ void hardware_init() {
 #ifdef GFX_EXTRA_PRE_INIT
     	GFX_EXTRA_PRE_INIT();
 #endif
-		if (!gfx->begin()) {
+		if (!gfx->begin(80E6)) {
 			Serial.println("gfx begin failed!");
 			while (true) vTaskDelay(10000);
 		}
