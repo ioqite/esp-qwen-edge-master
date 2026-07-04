@@ -74,9 +74,11 @@ bool syncing_sntp = false;     // 是否正在同步SNTP时间
 // 最大 保存的对话轮数
 #define MAX_MESSAGES 20
 
+String main_label_text_tmp;
+
 struct chat_window_t{
-	String ta_text;
-	String main_label_text;
+	String ta_text_save;
+	String main_label_text_save;
 	std::vector<String> chatHistory; // 使用一个数组来存储 每一条JSON格式的消息(String) max:MAX_MESSAGES * 2 + 1
 	uint32_t ta_pos = 0;
 	int16_t main_label_pos = 0;
@@ -100,7 +102,7 @@ bool show_proced = 0;   // 是否显示 预处理过的 提示词, 由 &3 键切
 bool calc_mode   = 0;   // 是否启用 计算器模式,       由 &4 键切换
 // bool enable_search = 0; // 是否启用 联网搜索,      未实现
 
-// ###################### other #########################
+// ###################### 其他 #########################
 // 储存 时间信息
 tm timeinfo;
 
@@ -219,7 +221,7 @@ void ta_set_text(const char* text) {
 // 暂存 ta 上的文本
 void ta_tmp_save() {
 	if (lvgl_mux_lock()) { // 上锁
-		current_window.ta_text = lv_textarea_get_text(ta);
+		current_window.ta_text_save = lv_textarea_get_text(ta);
 		current_window.ta_pos = lv_textarea_get_cursor_pos(ta);
 		lvgl_mutex_unlock(); // 解锁
 	}
@@ -227,7 +229,7 @@ void ta_tmp_save() {
 // 恢复 ta 上的文本
 void ta_tmp_recover() {
 	if (lvgl_mux_lock()) { // 上锁
-		lv_textarea_set_text(ta, current_window.ta_text.c_str());
+		lv_textarea_set_text(ta, current_window.ta_text_save.c_str());
 		lv_textarea_set_cursor_pos(ta, current_window.ta_pos);
 		lvgl_mutex_unlock(); // 解锁
 	}
@@ -235,7 +237,7 @@ void ta_tmp_recover() {
 // 在 ta 上临时显示文本
 void ta_tmp_show(const char* text, uint16_t delay_ms = 700) {
 	if (lvgl_mux_lock()) { // 上锁
-		current_window.ta_text = lv_textarea_get_text(ta);
+		current_window.ta_text_save = lv_textarea_get_text(ta);
 		current_window.ta_pos = lv_textarea_get_cursor_pos(ta);
 		lv_textarea_set_text(ta, text);
 		lvgl_mutex_unlock(); // 解锁
@@ -243,7 +245,7 @@ void ta_tmp_show(const char* text, uint16_t delay_ms = 700) {
 
 	vTaskDelay(delay_ms / portTICK_PERIOD_MS);
 
-	ta_set_text(current_window.ta_text.c_str());
+	ta_set_text(current_window.ta_text_save.c_str());
 	if (lvgl_mux_lock()) { // 上锁
 		lv_textarea_set_cursor_pos(ta, current_window.ta_pos);
 		lvgl_mutex_unlock(); // 解锁
@@ -253,15 +255,15 @@ void ta_tmp_show(const char* text, uint16_t delay_ms = 700) {
 // ============== main_label 操作 ===============
 // 添加文本到 main_label 上
 void main_label_add_text(const char* text) {
-	current_window.main_label_text += text;
+	main_label_text_tmp = lv_label_get_text(main_label);
+	main_label_text_tmp += text;
 	if (lvgl_mux_lock()) { // 上锁
-		lv_label_set_text(main_label, current_window.main_label_text.c_str());
+		lv_label_set_text(main_label, main_label_text_tmp.c_str());
 		lvgl_mutex_unlock();
 	}
 }
 // 设置 main_label 上的文本
 void main_label_set_text(const char* text) {
-	current_window.main_label_text = text;
 	if (lvgl_mux_lock()) { // 上锁
 		lv_label_set_text(main_label, text);
 		lvgl_mutex_unlock();
@@ -270,7 +272,7 @@ void main_label_set_text(const char* text) {
 // 暂存 main_label 上的文本
 void main_label_tmp_save() {
 	if (lvgl_mux_lock()) { // 上锁
-		current_window.main_label_text = lv_label_get_text(main_label);
+		current_window.main_label_text_save = lv_label_get_text(main_label);
 		current_window.main_label_pos = lv_obj_get_scroll_y(main_panel);
 		Serial.println(current_window.main_label_pos);
 		lvgl_mutex_unlock(); // 解锁
@@ -279,7 +281,7 @@ void main_label_tmp_save() {
 // 恢复 main_label 上的文本
 void main_label_tmp_recover() {
 	if (lvgl_mux_lock()) { // 上锁
-		lv_label_set_text(main_label, current_window.main_label_text.c_str());
+		lv_label_set_text(main_label, current_window.main_label_text_save.c_str());
 		lv_obj_scroll_to_y(main_panel, current_window.main_label_pos, LV_ANIM_ON);
 		Serial.println(current_window.main_label_pos);
 		lvgl_mutex_unlock(); // 解锁
@@ -288,7 +290,7 @@ void main_label_tmp_recover() {
 // 在 main_label 上临时显示文本
 void main_label_tmp_show(const char* text, uint16_t delay_ms = 700) {
 	if (lvgl_mux_lock()) { // 上锁
-		current_window.main_label_text = lv_label_get_text(main_label);
+		current_window.main_label_text_save = lv_label_get_text(main_label);
 		current_window.main_label_pos = lv_obj_get_scroll_y(main_panel);
 		Serial.println(current_window.main_label_pos);
 		lv_label_set_text(main_label, text);
@@ -298,7 +300,7 @@ void main_label_tmp_show(const char* text, uint16_t delay_ms = 700) {
 	vTaskDelay(delay_ms / portTICK_PERIOD_MS);
 
 	if (lvgl_mux_lock()) { // 上锁
-		lv_label_set_text(main_label, current_window.main_label_text.c_str());
+		lv_label_set_text(main_label, current_window.main_label_text_save.c_str());
 		lv_obj_scroll_to_y(main_panel, current_window.main_label_pos, LV_ANIM_ON);
 		Serial.println(current_window.main_label_pos);
 		lvgl_mutex_unlock(); // 解锁
@@ -356,18 +358,18 @@ void connect_wifi() {
 	int16_t password_num = sizeof(passwords) / sizeof(passwords[0]) - 1;
 	if (ssid_num != password_num) {
 		Serial.println("SSID 数量与密码数量不一致");
-		main_label_add_text("SSID 数量与密码数量不一致");
+		main_label_set_text("SSID 数量与密码数量不一致");
 		while (1) vTaskDelay(10000 / portTICK_PERIOD_MS);
 	}
 	
-	current_window.main_label_text = "#0060b9 请选择 WIFI：\n";
+	main_label_text_tmp = "#0060b9 请选择 WIFI：\n";
 	for (int16_t i=1; i<=ssid_num; i++) {
-		current_window.main_label_text += i;
-		current_window.main_label_text += ": ";
-		current_window.main_label_text += ssids[i];
-		current_window.main_label_text += "\n";
+		main_label_text_tmp += i;
+		main_label_text_tmp += ": ";
+		main_label_text_tmp += ssids[i];
+		main_label_text_tmp += "\n";
 	}
-	main_label_set_text(current_window.main_label_text.c_str());
+	main_label_set_text(main_label_text_tmp.c_str());
 
 	// 等待选择 SSID 并初始化 WiFi
 	while (1) {
@@ -525,8 +527,8 @@ void my_loop(void *param) {
 		} else if (proc_key.length() >= 3 && proc_key.startsWith("$S") && proc_key.substring(2).toInt() > 0 && proc_key.substring(2).toInt() <= MAX_CHAT_WINDOW) {
 			if (lvgl_mux_lock()) { // 上锁
 				// 保存当前窗口 所有状态
-				current_window.ta_text = lv_textarea_get_text(ta);
-				current_window.main_label_text = lv_label_get_text(main_label);
+				current_window.ta_text_save = lv_textarea_get_text(ta);
+				current_window.main_label_text_save = lv_label_get_text(main_label);
 				current_window.ta_pos = lv_textarea_get_cursor_pos(ta);
 				current_window.main_label_pos = lv_obj_get_scroll_y(main_panel);
 				
@@ -538,7 +540,7 @@ void my_loop(void *param) {
 				chat_window_select = proc_key.substring(2).toInt() - 1;
 
 				// 切换到新窗口 main_label的状态
-				lv_label_set_text(main_label, current_window.main_label_text.c_str());
+				lv_label_set_text(main_label, current_window.main_label_text_save.c_str());
 				lv_obj_scroll_to_y(main_panel, current_window.main_label_pos, LV_ANIM_ON);
 				Serial.println(current_window.main_label_pos);
 				lvgl_mutex_unlock(); // 解锁
@@ -548,7 +550,7 @@ void my_loop(void *param) {
 			
 			// 切换到新窗口 ta的状态
 			if (lvgl_mux_lock()) { // 上锁
-				lv_textarea_set_text(ta, current_window.ta_text.c_str());
+				lv_textarea_set_text(ta, current_window.ta_text_save.c_str());
 				lv_textarea_set_cursor_pos(ta, current_window.ta_pos);
 				lvgl_mutex_unlock(); // 解锁
 			}
