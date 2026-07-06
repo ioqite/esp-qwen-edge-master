@@ -56,8 +56,6 @@ uint16_t *pcm_data;                // 录音缓存区
 websockets::WebsocketsClient client;
 String asr_text = "";   // 最终识别结果文本
 bool asr_idle = 1;      // 是否空闲
-String tmp_output;      // 临时文本输出
-JsonDocument tmp_doc;   // 临时 JSON 对象
 int eventIdCounter = 0; // 事件ID计数器
 size_t bytes_read = 0;
 uint32_t recordingSize = 0;
@@ -109,10 +107,10 @@ String proced;
 // 用户提示词
 String user_prompt = "";
 
-bool bypass_proc = 0;   // 是否跳过 拼音预处理,       由 &2 键切换
-bool show_proced = 0;   // 是否显示 预处理过的 提示词, 由 &3 键切换
-bool calc_mode   = 0;   // 是否启用 计算器模式,       由 &4 键切换
-// bool enable_search = 0; // 是否启用 联网搜索,      未实现
+bool use_proc = 0;         // 是否使用 拼音预处理,       由 &2 键切换
+bool show_proced = 0;      // 是否显示 预处理过的 提示词, 由 &3 键切换
+bool calc_mode   = 0;      // 是否启用 计算器模式,       由 &4 键切换
+// bool enable_search = 0; // 是否启用 联网搜索,         未实现
 
 // ###################### 其他 #########################
 // 储存 时间信息
@@ -149,6 +147,7 @@ String read_key() {
 				}
 			} else if (transferring_key) proc_key += t;
 		} else vTaskDelay(2 / portTICK_PERIOD_MS);
+		core0_loop_func();
 	}
 }
 
@@ -269,6 +268,7 @@ void setupI2S() {
 	Serial.println("OK!");
 }
 
+// 创建 WAV 头
 void generate_wav_header(char* wav_header, uint32_t wav_size, uint32_t sample_rate){
     // See this for reference: http://soundfile.sapp.org/doc/WaveFormat/
     uint32_t file_size = wav_size + WAVE_HEADER_SIZE - 8;
@@ -290,7 +290,7 @@ void generate_wav_header(char* wav_header, uint32_t wav_size, uint32_t sample_ra
     memcpy(wav_header, set_wav_header, sizeof(set_wav_header));
 }
 
-// 录音 PCM 音频 (需手动 释放内存)
+// 录音 PCM 音频 (需手动 释放pcm_data)
 void record_pcm(const char *key) {
 	bytes_read = 0;
 	recordingSize = 0;
@@ -298,8 +298,8 @@ void record_pcm(const char *key) {
 	// 分配 pcm_data
 	pcm_data = (uint16_t *)ps_malloc(BUFFER_SIZE * sizeof(uint16_t));
 	if (!pcm_data) {
-		Serial.println("Failed to allocate memory for pcm_data from PSRAM");
-		main_label_add_text("Failed to allocate memory for pcm_data from PSRAM");
+		Serial.println("无法从 PSRAM 给 pcm_data 分配内存");
+		main_label_add_text("无法从 PSRAM 给 pcm_data 分配内存");
 		return;
 	}
 	
@@ -312,7 +312,7 @@ void record_pcm(const char *key) {
 
 		if (millis() - start_time > 240) { // 每 240ms 检查一次是否松开录音按钮（按键发送间隔是 240ms）
 			start_time = millis();
-			if (!check_key(1, "&1")) break;
+			if (!check_key(1, key)) break;
 		}
 	}
 }
@@ -333,6 +333,8 @@ void asr_send(uint16_t* pcm_data, uint32_t size) {
 		asr_idle = 1;
 		return;
 	}
+	String tmp_output;      // 临时文本输出
+	JsonDocument tmp_doc;   // 临时 JSON 对象
 
 	Serial.print("[ASR] 连接服务器中 ... ");
 	main_label_set_text("[ASR] 连接服务器中 ... ");
@@ -375,21 +377,20 @@ void asr_send(uint16_t* pcm_data, uint32_t size) {
 	JsonObject transcription = session["input_audio_transcription"].to<JsonObject>();
 	transcription["language"] = ASR_LANGUAGE;
 	
-	if (ENABLE_SERVER_VAD) {
+#if ENABLE_SERVER_VAD
 		// VAD模式：服务端自动检测语音起止
-		JsonObject turnDetection = session["turn_detection"].to<JsonObject>();
-		turnDetection["type"] = "server_vad";
-		turnDetection["threshold"] = 0.0;
-		turnDetection["silence_duration_ms"] = 400;
-	} else {
+		session["turn_detection"]["type"] = "server_vad";
+		session["turn_detection"]["threshold"] = ASR_Threshold;
+		session["turn_detection"]["silence_duration_ms"] = ASR_Silence_Duration_MS;
+#else
 		// Manual模式：客户端控制断句
 		session["turn_detection"] = nullptr;
-	}
+#endif
 	
 	serializeJson(tmp_doc, tmp_output);
 	
 	Serial.println("[ASR] session.update");
-	main_label_add_text("[ASR] session.update\n");
+	// main_label_add_text("[ASR] session.update\n");
 	client.send(tmp_output);
 	
 	vTaskDelay(15 / portTICK_PERIOD_MS);
@@ -416,7 +417,8 @@ void asr_send(uint16_t* pcm_data, uint32_t size) {
 		serializeJson(tmp_doc, tmp_output);
 		
 		Serial.println("[ASR] input_audio_buffer.append [" + String(i) + " / " + String(totalChunks) + "]");
-		main_label_set_text( ("[ASR] input_audio_buffer.append [" + String(i) + " / " + String(totalChunks) + "]").c_str() );
+		// main_label_set_text( ("[ASR] input_audio_buffer.append [" + String(i) + " / " + String(totalChunks) + "]").c_str() );
+		main_label_set_text( ("[ASR] 音频块发送中 [" + String(i) + " / " + String(totalChunks) + "]").c_str() );
 		client.send(tmp_output);
 
 		offset += chunkSize;
@@ -434,7 +436,7 @@ void asr_send(uint16_t* pcm_data, uint32_t size) {
 		serializeJson(tmp_doc, tmp_output);
 		
 		Serial.println("[ASR] input_audio_buffer.commit");
-		main_label_set_text("[ASR] input_audio_buffer.commit\n");
+		// main_label_set_text("[ASR] input_audio_buffer.commit\n");
 		client.send(tmp_output);
 	}
 	
@@ -455,7 +457,6 @@ void asr_send(uint16_t* pcm_data, uint32_t size) {
 	Serial.println("[ASR] 等待最终结果");
 	main_label_set_text("[ASR] 等待最终结果\n");
 }
-
 
 /**
  * @brief 向对话历史中添加消息
@@ -496,13 +497,11 @@ int8_t getAPIanswer(const char* _SYSTEM_PROMPT, const String& _userPrompt, const
 	if (connecting_wifi) {
 		Serial.println("正在连接 WiFi");
 		main_label_set_text("#b9450f 正在连接 WiFi #");
-		asr_idle = 1;
 		return -2;
 	}
 	if (WiFi.status() != WL_CONNECTED) {
 		Serial.println("未连接 WiFi");
 		main_label_set_text("#e31919 未连接 WiFi #");
-		asr_idle = 1;
 		return -2;
 	}
 
@@ -735,7 +734,7 @@ void main_label_tmp_show(const char* text, uint16_t delay_ms = 700) {
 	}
 }
 
-
+// 匹配拼音 -> 词
 void word_match(const String &input_str, std::vector<String> &word_result, String &split_result) {
 	split_result = "";
 	word_result.clear();
@@ -784,6 +783,7 @@ void word_match(const String &input_str, std::vector<String> &word_result, Strin
 	zh_word_free_match(blk);
 }
 
+// 更新 候选栏
 void update_candidate() {
 	candidate_str = "";
 	if (word_result.empty()) {
@@ -795,7 +795,7 @@ void update_candidate() {
 		return;
 	}
 	candidate_offset = constrain(candidate_offset, 0, word_result.size()-1);
-	for (int i=candidate_offset, j=1; i<word_result.size(); i++, j++) {
+	for (int i=candidate_offset, j=1; i<word_result.size() && j<10; i++, j++) {
 		candidate_str += String(j) + "." + word_result[i] + " ";
 	}
 	Serial.println(candidate_str);
@@ -805,6 +805,7 @@ void update_candidate() {
 	}
 }
 
+// 更新 候选词 与 候选栏
 void update_word_match() {
 	word_match(pinyin_str, word_result, split_result);
 	update_candidate();
@@ -942,7 +943,6 @@ void wait_wifi_connection(void *param) {
 
 // 选择SSID 并 连接WiFi
 void connect_wifi() {
-	connecting_wifi = true;
 	Serial.println("初始化 WiFi");
 
 	int16_t ssid_num = sizeof(ssids) / sizeof(ssids[0]) - 1;
@@ -966,6 +966,7 @@ void connect_wifi() {
 	while (1) {
 		proc_key = read_key();
 		if (proc_key.toInt() > 0 && proc_key.toInt() <= ssid_num) {
+			connecting_wifi = true;
 			int wifi_choose = proc_key.toInt();
 			
 			Serial.println("选择 SSID: " + proc_key);
@@ -1006,4 +1007,11 @@ void print_heap_free() {
 	Serial.printf(" - Internal RAM free: %.2f KB\r\n", heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024.0);
 	Serial.printf(" - SPI RAM free: %.2f KB\r\n\r\n", heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024.0);
 }
+
+// 在 Core0(my_loop) 空闲(等待)时 执行的代码
+// 限制: 在处理 耗时较长的任务[等待结果，录音时]时, 无法执行
+void core0_loop_func() {
+	client.poll(); // 处理接收的消息
+}
+
 

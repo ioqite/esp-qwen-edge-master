@@ -1,4 +1,4 @@
-// ======== esp32s3-lcd-2 ========
+
 
 #include "app_common.hpp"
 #include "tools_func.hpp"
@@ -27,7 +27,8 @@ void my_loop(void *param) {
 		// Serial.print("[Received] ");
 		// Serial.println(message.data());
 		
-		tmp_doc.clear();
+		JsonDocument tmp_doc;   // 临时 JSON 对象
+		
 		DeserializationError error = deserializeJson(tmp_doc, message.data());
 		if (error) {
 			Serial.print("JSON 解析错误: ");
@@ -69,6 +70,13 @@ void my_loop(void *param) {
 			Serial.print("语音识别结果：");
 			Serial.println(asr_text);
 			// main_label_add_text("语音识别结果：" + asr_text + "\n");
+
+			if (asr_text.length() > 0) {
+				if (lvgl_mux_lock()) { // 上锁
+					lv_textarea_add_text(ta, asr_text.c_str());
+					lvgl_mutex_unlock(); // 解锁
+				}
+			}
 		}
 		else if (strcmp(eventType, "session.finished") == 0) {
 			// 会话结束
@@ -88,13 +96,12 @@ void my_loop(void *param) {
 	Serial.println("Setup done");
 	print_heap_free();
 
-	// 主循环 (Core 1)
+	// 主循环 (Core 0)
 	while (1) {
 		proc_key = read_key(); // 读取按键输入
 		Serial.println("Key: " + proc_key);
 		if (proc_key == "$12") {
-			print_heap_free();
-
+			// print_heap_free();
 			if (lvgl_mux_lock()) { // 上锁
 				user_prompt = lv_textarea_get_text(ta);
 				
@@ -107,13 +114,14 @@ void my_loop(void *param) {
 			main_label_set_text("#7e00d2 等待结果中 ... #");
 
 			getAnswer(user_prompt);
-			main_label_set_text(answer.c_str());
+			if (answer.length()) main_label_set_text(answer.c_str()); // answer为空则不更新
 		} else if (proc_key == "BCK") {
 			if (lvgl_mux_lock()) { // 上锁
 				pinyin_str = lv_label_get_text(pinyin_input_l); // 同步文本
 				lvgl_mutex_unlock(); // 解锁
 			}
 			if (typing_pinyin && pinyin_str.length()) { // 拼音输入模式
+				candidate_offset = 0;
 				pinyin_str = pinyin_str.substring(0, pinyin_str.length() - 1);
 				if (lvgl_mux_lock()) { // 上锁
 					lv_label_set_text(pinyin_input_l, pinyin_str.c_str());
@@ -137,8 +145,8 @@ void my_loop(void *param) {
 			send_key_to_ta(LV_KEY_RIGHT);
 
 		} else if (proc_key == "&S1") {
-			bypass_proc = !bypass_proc;
-			ta_tmp_show(bypass_proc ? "跳过拼音预处理: 1" : "跳过拼音预处理: 0");
+			use_proc = !use_proc;
+			ta_tmp_show(use_proc ? "使用拼音预处理: 1" : "使用拼音预处理: 0");
 		} else if (proc_key == "&S2") {
 			show_proced = !show_proced;
 			ta_tmp_show(show_proced ? "显示拼音处理结果: 1" : "显示拼音处理结果: 0");
@@ -147,19 +155,20 @@ void my_loop(void *param) {
 				if (lvgl_mux_lock()) { // 上锁
 					lv_textarea_add_text(ta, lv_label_get_text(pinyin_input_l));
 
-					lv_obj_add_flag(candidate_l, LV_OBJ_FLAG_HIDDEN);
-					lv_obj_add_flag(pinyin_input_l, LV_OBJ_FLAG_HIDDEN);
 					lv_label_set_text(candidate_l, "");
 					lv_label_set_text(pinyin_input_l, "");
 
 					lvgl_mutex_unlock(); // 解锁
 					word_result.clear();
+					pinyin_str = "";
+					candidate_offset = 0;
 				}
 			} else { // 正常输入模式
 				send_key_to_ta(LV_KEY_ENTER);
 			}
 		// } else if (proc_key == "&2") {
-		// 	Serial.print("录音中 ... ");
+		// 	Serial.print("[WAV] 录音中 ... ");
+		// main_label_set_text("[WAV] 录音中 ... ");
 			
 		// 	record_pcm("&2");
 		// 	Serial.println("OK");
@@ -167,6 +176,9 @@ void my_loop(void *param) {
 		// 	// ==========================================
 		// 	// === 新增：生成 WAV 头并写入 SD 卡 ===
 		// 	// ==========================================
+		// Serial.print("[WAV] 写入中 ... ");
+		// main_label_set_text("[WAV] 写入中 ... ");
+			
 		// 	uint32_t pcm_byte_size = recordingSize * sizeof(uint16_t); // 计算实际录制的字节长度
 
 		// 	// 只有确实录到了数据才写文件
@@ -201,6 +213,8 @@ void my_loop(void *param) {
 
 		// 	// 释放内存
 		// 	free(pcm_data);
+		// Serial.print("OK");
+		// main_label_add_text("");
 		} else if (proc_key == "&4") {
 			calc_mode = !calc_mode;
 			ta_tmp_show(calc_mode ? "计算器模式: 1" : "计算器模式: 0");
@@ -246,8 +260,8 @@ void my_loop(void *param) {
 			// 保存当前文本, 用于后续恢复
 			main_label_tmp_save();
 
-			Serial.print("录音中 ... ");
-			main_label_set_text("录音中 ... ");
+			Serial.print("[ASR] 录音中 ... ");
+			main_label_set_text("[ASR] 录音中 ... ");
 
 			// 重置状态
 			asr_text = "";
@@ -263,22 +277,22 @@ void my_loop(void *param) {
 			
 			// 释放内存
 			free(pcm_data);
+
+			// while (!asr_idle) {
+			// 	client.poll(); // 处理接收的消息
+			// 	vTaskDelay(2 / portTICK_PERIOD_MS);
+			// }
 			
-			while (!asr_idle) {
-				client.poll(); // 处理接收的消息
-				vTaskDelay(2 / portTICK_PERIOD_MS);
-			}
-			asr_idle = 1;
-			
-			if (asr_text.length() > 0) {
-				if (lvgl_mux_lock()) { // 上锁
-					lv_textarea_add_text(ta, asr_text.c_str());
-					lvgl_mutex_unlock(); // 解锁
-				}
-			}
+			// if (asr_text.length() > 0) {
+			// 	if (lvgl_mux_lock()) { // 上锁
+			// 		lv_textarea_add_text(ta, asr_text.c_str());
+			// 		lvgl_mutex_unlock(); // 解锁
+			// 	}
+			// }
 			// main_label_set_text("ASR 识别完成: ");
 			// main_label_add_text(asr_text);
 
+			vTaskDelay(700 / portTICK_PERIOD_MS);
 			// 恢复 main_label 上的文本
 			main_label_tmp_recover();
 		} else if (proc_key == "&5") {
@@ -292,6 +306,7 @@ void my_loop(void *param) {
 					lv_label_set_text(pinyin_input_l, "");
 					pinyin_str = "";
 					word_result.clear();
+					candidate_offset = 0;
 				} else { // 退出了 拼音输入模式
 					lv_label_set_text(candidate_l, "");
 					lv_label_set_text(pinyin_input_l, "");
@@ -317,6 +332,7 @@ void my_loop(void *param) {
 						lv_label_set_text(candidate_l, "");
 						pinyin_str = "";
 						word_result.clear();
+						candidate_offset = 0;
 					}
 					lvgl_mutex_unlock(); // 解锁
 				}
@@ -324,13 +340,13 @@ void my_loop(void *param) {
 				else if (typing_pinyin && proc_key[0] == '0') {
 					lv_textarea_add_text(ta, lv_label_get_text(pinyin_input_l));
 
-					lv_obj_add_flag(candidate_l, LV_OBJ_FLAG_HIDDEN);
-					lv_obj_add_flag(pinyin_input_l, LV_OBJ_FLAG_HIDDEN);
 					lv_label_set_text(candidate_l, "");
 					lv_label_set_text(pinyin_input_l, "");
 
 					lvgl_mutex_unlock(); // 解锁
 					word_result.clear();
+					pinyin_str = "";
+					candidate_offset = 0;
 				}
 				// 拼音输入下的 [ -> offset-MOVE_WORDS (右移 MOVE_WORDS 项)
 				else if (typing_pinyin && proc_key == "[") {
@@ -367,12 +383,13 @@ void my_loop(void *param) {
 		// 	Serial.println("Wait for recording");
 		// }
 
-		client.poll(); // 处理接收的消息
+		core0_loop_func();
 		
 		// 清空串口
 		while (Serial1.available()) Serial1.read();
 // 		vTaskDelay(1 / portTICK_PERIOD_MS);
 	}
+	vTaskDelete(NULL);
 }
 
 // 根据情况发送不同请求
@@ -401,7 +418,7 @@ void getAnswer(String& _user_prompt) {
 			vTaskDelay(100 / portTICK_PERIOD_MS);
 			if (check_key()) break;
 		}
-		answer = "无";
+		answer = "";
 		return;
 	}
 	if (_user_prompt == "-imu") {
@@ -409,7 +426,6 @@ void getAnswer(String& _user_prompt) {
 			IMU.update();
 			IMU.getAccel(&accelData); // accelData.accelX accelData.accelY accelData.accelZ
 			IMU.getGyro(&gyroData);   // gyroData.gyroX   gyroData.gyroY   gyroData.gyroZ
-			// Serial.println(IMU.getTemp());
 
 			answer = "IMU 温度: " + String(IMU.getTemp());
 			answer += "\r\n加速度计:\r\n - X: " + String(accelData.accelX) + "\r\n - Y: " + String(accelData.accelY) + "\r\n - Z: " + String(accelData.accelZ);
@@ -418,7 +434,7 @@ void getAnswer(String& _user_prompt) {
 			vTaskDelay(50 / portTICK_PERIOD_MS);
 			if (check_key()) break;
 		}
-		answer = "无";
+		answer = "";
 		return;
 	}
 	if (_user_prompt == "-i") {
@@ -469,7 +485,7 @@ void getAnswer(String& _user_prompt) {
 			vTaskDelay(100 / portTICK_PERIOD_MS);
 			if (check_key()) break;
 		}
-		answer = "无";
+		answer = "";
 		return;
 	}
 	if (_user_prompt.startsWith("-bl=")) {
@@ -542,19 +558,22 @@ void getAnswer(String& _user_prompt) {
 	}
 	if (_user_prompt == "-wifi") {
 		connect_wifi();
-		answer = "WiFi ..";
+		answer = "";
 		return;
 	}
 	if (_user_prompt == "-sntp") {
 		sync_sntp();
-		answer = "#10acb1 使用 SNTP 同步时间 ...";
+		answer = "";
 		return;
 	}
 	if (_user_prompt.startsWith("-ut")) {
 		// uint8_t rx_pin = _user_prompt.substring(_user_prompt.indexOf("=") + 1);
 		// uint8_t tx_pin = _user_prompt.substring(_user_prompt.indexOf("=") + 1);
-		Serial2.begin(115200, SERIAL_8N1, 6, 16); // 初始化 串口
-		main_label_set_text("#10b166 UART 已连接(115200,8N1, RX=6, TX=16)\n按 $12 退出 UART\n");
+		Serial2.begin(DEFAULT_BAUD, SERIAL_8N1, DEFAULT_RX_PIN, DEFAULT_TX_PIN); // 初始化 串口
+		char tmp[80];
+		snprintf(tmp, sizeof(tmp), "#10b166 UART 已连接: # \n #10b186 %d,8N1, RX=%d, TX=%d # \n #d6cc14 按 $12 退出 UART # \n", 
+			DEFAULT_BAUD, DEFAULT_RX_PIN, DEFAULT_TX_PIN);
+		main_label_set_text(tmp);
 		vTaskDelay(80 / portTICK_PERIOD_MS);
 		char c_tmp;
 		String str_tmp;
@@ -572,7 +591,8 @@ void getAnswer(String& _user_prompt) {
 			}
 			vTaskDelay(1 / portTICK_PERIOD_MS);
 		}
-		answer = "#10b166 UART 已断开";
+		main_label_set_text("#10b166 UART 已断开");
+		answer = "";
 		return;
 	}
 
@@ -599,19 +619,19 @@ void getAnswer(String& _user_prompt) {
             Serial.print(errMsg);
 			answer = errMsg;
         }
-	} else if (bypass_proc == 1) {  // 跳过 拼音预处理
-		getAPIanswer(SYS_PROMPT_NO_PROC, _user_prompt, MAIN_MODEL_NAME, answer, true);
-	} else  if (bypass_proc == 0) {  // 默认模式
+	} else if (use_proc == 1) {  // 使用 拼音预处理
 		if (getAPIanswer(PROC_SYS_PROMPT, _user_prompt, PROC_MODEL_NAME, proced, false) != 0) {
 			answer = proced;
 			return;
 		} else {
 			Serial.println("处理后: " + proced);
 			String tmp_ans;
-			getAPIanswer(SYS_PROMPT, proced, MAIN_MODEL_NAME, tmp_ans, true);
+			getAPIanswer(SYS_PROMPT_WITH_PROC, proced, MAIN_MODEL_NAME, tmp_ans, true);
 			if (show_proced) answer = "处理后: " + proced + "\n" + tmp_ans;
 			else answer = tmp_ans;
 		}
+	} else  if (use_proc == 0) {  // 默认模式
+		getAPIanswer(SYS_PROMPT_NO_PROC, _user_prompt, MAIN_MODEL_NAME, answer, true);
 	}
 
 	Serial.print("\r\n--- start answer ---\r\n");

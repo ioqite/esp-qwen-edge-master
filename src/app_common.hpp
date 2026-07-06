@@ -90,6 +90,11 @@
 #define IMU_PIN_SCL 47    // IMU SCL 引脚
 #define IMU_ADDRESS 0x6B  // IMU 地址, 默认 0x6B
 
+// 默认 UART模式 引脚
+#define DEFAULT_BAUD    115200
+#define DEFAULT_RX_PIN  6
+#define DEFAULT_TX_PIN  16
+
 // 模型名称
 #define MAIN_MODEL_NAME "qwen-plus"   // 主模型
 #define PROC_MODEL_NAME "qwen-plus"   // 拼音预处理 模型
@@ -98,9 +103,16 @@
 #define QWEN_ASR_MODEL "qwen3-asr-flash-realtime"
 // 北京地域 baseUrl
 #define QWEN_ASR_BASE_URL "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
+// 要识别的语言
+#define ASR_LANGUAGE "zh"
+
 // VAD模式设置: true=VAD模式（服务端自动断句），false=Manual模式（客户端控制断句）
 #define ENABLE_SERVER_VAD false
-#define ASR_LANGUAGE "zh"
+#if ENABLE_SERVER_VAD
+#define ASR_Threshold   0.0         // VAD 识别阈值
+#define ASR_Silence_Duration_MS 400 // 允许的静默持续时间(ms)
+#endif
+
 
 // ############################## 提示词 #################################
 #define USE_COLOR_ANSWER 0 // 是否使用颜色回答
@@ -110,7 +122,7 @@
 #define SYS_PROMPT_NO_PROC "你是一个语言简练准确的AI助手。不要进入思考模式，尽可能不用生僻字，禁止使用Emoji和Markdown语法。要将一段文本染色，请在开始颜色时加上‘#RRGGBB ’，结束颜色时加上‘#’，RRGGBB为HEX颜色。"
 
 // 带 拼音预处理 的 系统提示词:
-#define SYS_PROMPT "你是一个语言简练的AI助手。不要进入思考模式，尽可能不用生僻字，禁止使用Emoji和Markdown语法。用户输入可能有汉字错误，请自动纠正。要将一段文本染色，请在开始颜色时加上‘#RRGGBB ’，结束颜色时加上‘#’，RRGGBB为HEX颜色。"
+#define SYS_PROMPT_WITH_PROC "你是一个语言简练的AI助手。不要进入思考模式，尽可能不用生僻字，禁止使用Emoji和Markdown语法。用户输入可能有汉字错误，请自动纠正。要将一段文本染色，请在开始颜色时加上‘#RRGGBB ’，结束颜色时加上‘#’，RRGGBB为HEX颜色。"
 
 // 拼音预处理 提示词:
 #define PROC_SYS_PROMPT "你是一个将拼音替换为文本的工具，如果输入中没有出现拼音则直接把输入原封不动地输出，禁止回答用户的问题！禁止回答用户的问题！也不要进入思考模式。如果有拼音则联系附近字符理解用户意思，将输入中的拼音+声调（0为轻声）替换为对应的汉字（仅替换拼音+声调，如没有则不替换，不要替换任何数字与符号），请仅在用户的拼音错误时自动纠正，不要输出其他内容，拼音之间会用空格分隔，输出时请忽略，如果能则尽量保持输出的是一句正常的话。"
@@ -120,7 +132,7 @@
 #define SYS_PROMPT_NO_PROC "你是一个语言简练准确的AI助手。不要进入思考模式，尽可能不用生僻字，禁止使用Emoji和Markdown语法。"
 
 // 带 拼音预处理 的 系统提示词:
-#define SYS_PROMPT "你是一个语言简练的AI助手。不要进入思考模式，尽可能不用生僻字，禁止使用Emoji和Markdown语法。用户输入可能有汉字错误，请自动纠正。"
+#define SYS_PROMPT_WITH_PROC "你是一个语言简练的AI助手。不要进入思考模式，尽可能不用生僻字，禁止使用Emoji和Markdown语法。用户输入可能有汉字错误，请自动纠正。"
 
 // 拼音预处理 提示词:
 #define PROC_SYS_PROMPT "你是一个将拼音替换为文本的工具，如果输入中没有出现拼音则直接把输入原封不动地输出，禁止回答用户的问题！禁止回答用户的问题！也不要进入思考模式。如果有拼音则联系附近字符理解用户意思，将输入中的拼音+声调（0为轻声）替换为对应的汉字（仅替换拼音+声调，如没有则不替换，不要替换任何数字与符号），请仅在用户的拼音错误时自动纠正，不要输出其他内容，拼音之间会用空格分隔，输出时请忽略，如果能则尽量保持输出的是一句正常的话。"
@@ -251,4 +263,18 @@ void asr_send(uint16_t* pcm_data, uint32_t size);
 
 // 选择SSID 并 连接WiFi
 void connect_wifi();
+
+// 匹配拼音 -> 词
+void word_match(const String &input_str, std::vector<String> &word_result, String &split_result);
+
+// 更新 候选栏
+void update_candidate();
+
+// 更新 候选词 与 候选栏
+void update_word_match();
+
+// 在 Core0(my_loop) 空闲(等待)时 执行的代码
+// 限制: 在处理 耗时较长的任务[等待结果，录音时]时, 无法执行
+void core0_loop_func();
+
 
