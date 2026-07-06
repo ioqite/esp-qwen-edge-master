@@ -84,18 +84,11 @@ void test2() {
     Serial.println("\n*********** Test2: 单个汉字模糊匹配测试 (vague match test) ******************");
     // Serial.printf("===================    enter \"exit()\" to exit  ====================================\n");
 
-    for (String input_str : {"de", "di", "du", "hao", "shi", "jie", "exit()"}) {
-    // while (1) {
-        // String input_str = Serial.readStringUntil('\n');
-        // input_str.trim();
-        // input_str.toLowerCase();
-        if (input_str == "exit()") break;
-
-        // 计时
-        clock_t start_time = clock();
-
+    for (String input_str : {"de", "di", "du", "hao", "shi", "jie"}) {
         uint8_t br; // 匹配结果数量
         char res_str2[MAX_CODE_BUFF_SZ]; // 所有匹配结果组成的字符串
+
+        clock_t start_time = clock();
 
         // 模糊匹配
         uint8_t res = zh_match_code_vague(input_str.c_str(), res_str2, MAX_CODE_SEARCH_TYPES, &br);
@@ -124,25 +117,15 @@ void test2() {
 // 拼音分词测试 (无空格) (pinyin split test : mixed pinyin string (no space))
 void test3() {
     Serial.println("\n*********** Test3: 拼音分词测试 (pinyin split test) ******************");
-    // Serial.printf("===================    enter \"exit()\" to exit  ====================================\n");
 
-    // while (1) {
-    for (String input_str : {"de", "di", "du", "hao", "shi", "jie", "exit()"}) {
-		// String input_str = Serial.readStringUntil('\n');
-        // input_str.trim();
-        // input_str.toLowerCase();
+    for (String input_str : {"de", "di", "du", "hao", "shi", "jie"}) {
 
-        // string input_str;
-        // std::getline(std::cin, input_str);
-		
-        if (input_str == "exit()") break;
-
-        const char* s = input_str.c_str();
         uint32_t start_time = clock();
-        __split_method_list_t* m_list = zh_pinyin_get_split(s);
+        match_case_list_t* m_list = zh_pinyin_get_split(input_str.c_str());
         zh_pinyin_filter_split(m_list);  /* use the filter option to eliminate unwanted result */
         uint32_t end_time = clock();
-        zh_pinyin_show_split(s, m_list);
+
+        zh_pinyin_show_split(input_str.c_str(), m_list);
         Serial.printf("splitting string take time : %d ms\n", end_time - start_time);
         zh_pinyin_free_split(m_list);  /* free the space */
     }
@@ -152,18 +135,8 @@ void test3() {
 // 带词库的完整的输入法测试 (无空格) (word match test : input mixed pinyin string (no space))
 void test4() {
     Serial.println("\n******************* Test4: 带词库的完整的输入法测试 (word match test) *******************");
-    // Serial.printf("===================    enter \"exit()\" to exit  ====================================\n");
     
-    for (String input_str : {"nihao", "shijie", "duqu", "shiwu", "weishenme", "exit()"}) {
-    // while (1) {
-		// String input_str = Serial.readStringUntil('\n');
-		// input_str.trim();
-        // input_str.toLowerCase();
-
-        if (input_str == "exit()") break;
-
-        // 这是一个用于声明 __word_block_t 存储结构的简单代码
-        // This is a simple code for declare the storge structure of __word_block_t
+    for (String input_str : {"nihao", "shijie", "duqu", "shiwu", "weishenme"}) {
         match_case_node_t sp;
         uint16_t idx = 0;
 

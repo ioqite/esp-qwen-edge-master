@@ -19,6 +19,9 @@ void my_loop(void *param) {
 	// 初始化 I2S
 	setupI2S();
 
+	// 初始化 拼音解码器
+	zh_pinyin_begin();
+
 	// WebSocket消息回调
 	client.onMessage([&](websockets::WebsocketsMessage message) {
 		// Serial.print("[Received] ");
@@ -106,9 +109,24 @@ void my_loop(void *param) {
 			getAnswer(user_prompt);
 			main_label_set_text(answer.c_str());
 		} else if (proc_key == "BCK") {
-			send_key_to_ta(LV_KEY_BACKSPACE); // user_prompt = user_prompt.substring(0, user_prompt.length() - 1);
+			if (lvgl_mux_lock()) { // 上锁
+				pinyin_str = lv_label_get_text(pinyin_input_l); // 同步文本
+				lvgl_mutex_unlock(); // 解锁
+			}
+			if (typing_pinyin && pinyin_str.length()) { // 拼音输入模式
+				pinyin_str = pinyin_str.substring(0, pinyin_str.length() - 1);
+				if (lvgl_mux_lock()) { // 上锁
+					lv_label_set_text(pinyin_input_l, pinyin_str.c_str());
+					if (!pinyin_str.length()) lv_label_set_text(candidate_l, "");
+					lvgl_mutex_unlock(); // 解锁
+				}
+				if (pinyin_str.length()) update_word_match();
+			} else { // 正常输入模式
+				send_key_to_ta(LV_KEY_BACKSPACE);
+			}
 		} else if (proc_key == "DEL") {
 			send_key_to_ta(LV_KEY_DEL);
+
 		} else if (proc_key == "UP") {
 			send_key_to_ta(LV_KEY_UP);
 		} else if (proc_key == "DOWN") {
@@ -117,14 +135,72 @@ void my_loop(void *param) {
 			send_key_to_ta(LV_KEY_LEFT);
 		} else if (proc_key == "RIGT") {
 			send_key_to_ta(LV_KEY_RIGHT);
-		} else if (proc_key == "ETR") {
-			send_key_to_ta(LV_KEY_ENTER);
-		} else if (proc_key == "&2") {
+
+		} else if (proc_key == "&S1") {
 			bypass_proc = !bypass_proc;
 			ta_tmp_show(bypass_proc ? "跳过拼音预处理: 1" : "跳过拼音预处理: 0");
-		} else if (proc_key == "&3") {
+		} else if (proc_key == "&S2") {
 			show_proced = !show_proced;
 			ta_tmp_show(show_proced ? "显示拼音处理结果: 1" : "显示拼音处理结果: 0");
+		} else if (proc_key == "ETR") {
+			if (typing_pinyin) { // 拼音输入模式: 将 拼音输入框 的文本 转移到 文本文本框(ta), 并关闭 拼音输入模式
+				if (lvgl_mux_lock()) { // 上锁
+					lv_textarea_add_text(ta, lv_label_get_text(pinyin_input_l));
+
+					lv_obj_add_flag(candidate_l, LV_OBJ_FLAG_HIDDEN);
+					lv_obj_add_flag(pinyin_input_l, LV_OBJ_FLAG_HIDDEN);
+					lv_label_set_text(candidate_l, "");
+					lv_label_set_text(pinyin_input_l, "");
+
+					lvgl_mutex_unlock(); // 解锁
+					word_result.clear();
+				}
+			} else { // 正常输入模式
+				send_key_to_ta(LV_KEY_ENTER);
+			}
+		// } else if (proc_key == "&2") {
+		// 	Serial.print("录音中 ... ");
+			
+		// 	record_pcm("&2");
+		// 	Serial.println("OK");
+
+		// 	// ==========================================
+		// 	// === 新增：生成 WAV 头并写入 SD 卡 ===
+		// 	// ==========================================
+		// 	uint32_t pcm_byte_size = recordingSize * sizeof(uint16_t); // 计算实际录制的字节长度
+
+		// 	// 只有确实录到了数据才写文件
+		// 	if (pcm_byte_size > 0) {
+		// 		// 1. 准备 44 字节的 WAV 文件头 (WAVE_HEADER_SIZE 通常定义为 44)
+		// 		char wav_header[WAVE_HEADER_SIZE];
+		// 		generate_wav_header(wav_header, pcm_byte_size, SAMPLE_RATE);
+
+		// 		// 2. 打开 SD 卡文件 (FILE_WRITE 会创建新文件，如果存在会覆盖)
+		// 		File wav_file = SD.open("/recording.wav", FILE_WRITE);
+		// 		if (wav_file) {
+		// 			// 3. 写入 WAV 文件头
+		// 			wav_file.write((uint8_t*)wav_header, WAVE_HEADER_SIZE);
+					
+		// 			// 4. 写入 PCM 纯音频数据
+		// 			// 【注意】必须将 uint16_t* 强制转换为 uint8_t*，长度传入字节数 pcm_byte_size
+		// 			size_t bytes_written = wav_file.write((uint8_t*)pcm_data, pcm_byte_size);
+		// 			wav_file.close();
+
+		// 			if (bytes_written == pcm_byte_size) {
+		// 				Serial.printf("WAV文件保存成功! 总大小: %d 字节\n", pcm_byte_size + WAVE_HEADER_SIZE);
+		// 			} else {
+		// 				Serial.println("Error: 写入SD卡数据不完整");
+		// 			}
+		// 		} else {
+		// 			Serial.println("Error: 无法打开SD卡文件");
+		// 		}
+		// 	} else {
+		// 		Serial.println("未录制到有效音频数据");
+		// 	}
+		// 	// ==========================================
+
+		// 	// 释放内存
+		// 	free(pcm_data);
 		} else if (proc_key == "&4") {
 			calc_mode = !calc_mode;
 			ta_tmp_show(calc_mode ? "计算器模式: 1" : "计算器模式: 0");
@@ -177,30 +253,8 @@ void my_loop(void *param) {
 			asr_text = "";
 			asr_idle = 0;
 			eventIdCounter = 0;
-			size_t bytes_read = 0;
-			uint32_t recordingSize = 0;
 			
-			// 分配 pcm_data
-			pcm_data = (uint16_t *)ps_malloc(BUFFER_SIZE * sizeof(uint16_t));
-			if (!pcm_data) {
-				Serial.println("Failed to allocate memory for pcm_data from PSRAM");
-				main_label_add_text("Failed to allocate memory for pcm_data from PSRAM");
-				return;
-			}
-			
-			uint32_t start_time = millis();
-			// 开始循环录音
-			while (recordingSize < MAX_RECORD_TIME_SECONDS * SAMPLE_RATE) {
-				esp_err_t err = i2s_read(I2S_PORT, pcm_data + recordingSize, CHUNK_SIZE * sizeof(uint16_t), &bytes_read, portMAX_DELAY);
-				if (err != ESP_OK) continue;
-				recordingSize += bytes_read / 2;
-
-				if (millis() - start_time > 240) { // 每 240ms 检查一次是否松开录音按钮（按键发送间隔是 240ms）
-					start_time = millis();
-					if (!check_key(1, "&1")) break;
-				}
-			}
-			
+			record_pcm("&1");
 			Serial.println("OK");
 			
 			main_label_set_text("ASR 识别中");
@@ -227,9 +281,84 @@ void my_loop(void *param) {
 
 			// 恢复 main_label 上的文本
 			main_label_tmp_recover();
+		} else if (proc_key == "&5") {
+			typing_pinyin = !typing_pinyin;
+
+			if (lvgl_mux_lock()) { // 上锁
+				if (typing_pinyin) { // 切换到了 拼音输入模式
+					lv_obj_clear_flag(candidate_l, LV_OBJ_FLAG_HIDDEN);
+					lv_obj_clear_flag(pinyin_input_l, LV_OBJ_FLAG_HIDDEN);
+					lv_label_set_text(candidate_l, "");
+					lv_label_set_text(pinyin_input_l, "");
+					pinyin_str = "";
+					word_result.clear();
+				} else { // 退出了 拼音输入模式
+					lv_label_set_text(candidate_l, "");
+					lv_label_set_text(pinyin_input_l, "");
+					lv_obj_add_flag(candidate_l, LV_OBJ_FLAG_HIDDEN);
+					lv_obj_add_flag(pinyin_input_l, LV_OBJ_FLAG_HIDDEN);
+				}
+				lvgl_mutex_unlock(); // 解锁
+			}
 		} else {
-			// send_key_to_ta(proc_key[0]);
-			ta_add_text(proc_key.c_str());
+			if (lvgl_mux_lock()) { // 上锁
+				// 拼音输入下的 字母输入
+				if (typing_pinyin && proc_key[0] >= 'a' && proc_key[0] <= 'z') {
+					pinyin_str += proc_key;
+					lv_label_set_text(pinyin_input_l, pinyin_str.c_str());
+					lvgl_mutex_unlock(); // 解锁
+					update_word_match();
+				}
+				// 选择候选词:  拼音输入模式  &&  word_result不为空     &&       proc_key 在 1 ~ 9 中
+				else if (typing_pinyin && word_result.size() > 0 && proc_key[0] >= '1' && proc_key[0] <= '9') {
+					if (proc_key.toInt()+candidate_offset <= word_result.size()) { // proc_key加偏移 超过 word_result 长度, 忽略
+						lv_textarea_add_text(ta, word_result[ proc_key.toInt() + candidate_offset - 1 ].c_str());
+						lv_label_set_text(pinyin_input_l, "");
+						lv_label_set_text(candidate_l, "");
+						pinyin_str = "";
+						word_result.clear();
+					}
+					lvgl_mutex_unlock(); // 解锁
+				}
+				// 拼音输入下的 0 等同与 ETR(Enter)
+				else if (typing_pinyin && proc_key[0] == '0') {
+					lv_textarea_add_text(ta, lv_label_get_text(pinyin_input_l));
+
+					lv_obj_add_flag(candidate_l, LV_OBJ_FLAG_HIDDEN);
+					lv_obj_add_flag(pinyin_input_l, LV_OBJ_FLAG_HIDDEN);
+					lv_label_set_text(candidate_l, "");
+					lv_label_set_text(pinyin_input_l, "");
+
+					lvgl_mutex_unlock(); // 解锁
+					word_result.clear();
+				}
+				// 拼音输入下的 [ -> offset-MOVE_WORDS (右移 MOVE_WORDS 项)
+				else if (typing_pinyin && proc_key == "[") {
+					lvgl_mutex_unlock(); // 解锁
+					
+					if (candidate_offset < MOVE_WORDS) {
+						candidate_offset = 0;
+					} else candidate_offset -= MOVE_WORDS;
+					update_candidate();
+				}
+				// 拼音输入下的 ] -> offset+MOVE_WORDS (左移 MOVE_WORDS 项)
+				else if (typing_pinyin && proc_key == "]") {
+					lvgl_mutex_unlock(); // 解锁
+					
+					if (candidate_offset+MOVE_WORDS*2 >= word_result.size()) {
+						candidate_offset = word_result.size() - MOVE_WORDS;
+					} else candidate_offset += MOVE_WORDS;
+					update_candidate();
+				}
+				// 拼音输入下的 其他字符 及 正常输入
+				else {
+					lv_textarea_add_text(ta, proc_key.c_str());
+					lvgl_mutex_unlock(); // 解锁
+				}
+			}
+		// } else {
+			// // send_key_to_ta(proc_key[0]);
+			// ta_add_text(proc_key.c_str());
 		}
 
 		// if (digitalRead(0) == LOW) {
@@ -260,72 +389,87 @@ void getAnswer(String& _user_prompt) {
 		}
 
 		char buffer[80];
-		if(!getLocalTime(&timeinfo)){
-			Serial.println("获取时间失败");
-			answer = "获取时间失败";
-			return;
+
+		while (1) {
+			if(!getLocalTime(&timeinfo)){
+				Serial.println("获取时间失败");
+				answer = "获取时间失败";
+				return;
+			}
+			strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S\r\n", &timeinfo);
+			main_label_set_text(buffer);
+			vTaskDelay(100 / portTICK_PERIOD_MS);
+			if (check_key()) break;
 		}
-		strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S\r\n", &timeinfo);
-		answer = buffer;
-		
-		Serial.println(answer);
+		answer = "无";
 		return;
 	}
 	if (_user_prompt == "-imu") {
-		IMU.update();
-		IMU.getAccel(&accelData); // accelData.accelX accelData.accelY accelData.accelZ
-		IMU.getGyro(&gyroData);   // gyroData.gyroX   gyroData.gyroY   gyroData.gyroZ
-		// Serial.println(IMU.getTemp());
+		while (1) {
+			IMU.update();
+			IMU.getAccel(&accelData); // accelData.accelX accelData.accelY accelData.accelZ
+			IMU.getGyro(&gyroData);   // gyroData.gyroX   gyroData.gyroY   gyroData.gyroZ
+			// Serial.println(IMU.getTemp());
 
-		answer = "IMU 温度: " + String(IMU.getTemp());
-		answer += "\r\n加速度计:\r\n - X: " + String(accelData.accelX) + "\r\n - Y: " + String(accelData.accelY) + "\r\n - Z: " + String(accelData.accelZ);
-		answer += "\r\n陀螺仪:\r\n - X: " + String(gyroData.gyroX) + "\r\n - Y: " + String(gyroData.gyroY) + "\r\n - Z: " + String(gyroData.gyroZ);
-		Serial.println(answer);
+			answer = "IMU 温度: " + String(IMU.getTemp());
+			answer += "\r\n加速度计:\r\n - X: " + String(accelData.accelX) + "\r\n - Y: " + String(accelData.accelY) + "\r\n - Z: " + String(accelData.accelZ);
+			answer += "\r\n陀螺仪:\r\n - X: " + String(gyroData.gyroX) + "\r\n - Y: " + String(gyroData.gyroY) + "\r\n - Z: " + String(gyroData.gyroZ);
+			main_label_set_text(answer.c_str());
+			vTaskDelay(50 / portTICK_PERIOD_MS);
+			if (check_key()) break;
+		}
+		answer = "无";
 		return;
 	}
 	if (_user_prompt == "-i") {
-		answer = "CPU 温度: " + String(temperatureRead());
-		// answer += "\r\n芯片版本: " + String(ESP.getChipRevision());
-		answer += "\r\nCPU 频率: " + String(ESP.getCpuFreqMHz()) + " MHz";
-		// answer += "\r\n循环计数: " + String(ESP.getCycleCount());
-		
-		answer += "\r\n堆 容量: " + String(ESP.getHeapSize() / 1024.0) + " KiB";
-		answer += "\r\n堆 空闲: " + String(ESP.getFreeHeap() / 1024.0) + " KiB";
-		answer += "\r\nPSRAM 容量: " + String(ESP.getPsramSize() / 1024.0 / 1024.0, 3) + " MiB";
-		answer += "\r\nPSRAM 空闲: " + String(ESP.getFreePsram() / 1024.0 / 1024.0, 3) + " MiB";
-		
-		answer += "\r\nFlash 模式: ";
-		switch (ESP.getFlashChipMode()) {
-			case FM_QIO:
-				answer += "QIO";
-				break;
-			case FM_QOUT:
-				answer += "QOUT";
-				break;
-			case FM_DIO:
-				answer += "DIO";
-				break;
-			case FM_DOUT:
-				answer += "DOUT";
-				break;
-			case FM_FAST_READ:
-				answer += "FAST_READ";
-				break;
-			case FM_SLOW_READ:
-				answer += "SLOW_READ";
-				break;
-			case FM_UNKNOWN:
-				answer += "UNKNOWN";
-				break;
-			default:
-				answer += "UNKNOWN";
-				break;
+		while (1) {
+			answer = "CPU 温度: " + String(temperatureRead());
+			// answer += "\r\n芯片版本: " + String(ESP.getChipRevision());
+			answer += "\r\nCPU 频率: " + String(ESP.getCpuFreqMHz()) + " MHz";
+			// answer += "\r\n循环计数: " + String(ESP.getCycleCount());
+			
+			answer += "\r\n堆 容量: " + String(ESP.getHeapSize() / 1024.0) + " KiB";
+			answer += "\r\n堆 空闲: " + String(ESP.getFreeHeap() / 1024.0) + " KiB";
+			answer += "\r\nPSRAM 容量: " + String(ESP.getPsramSize() / 1024.0 / 1024.0, 3) + " MiB";
+			answer += "\r\nPSRAM 空闲: " + String(ESP.getFreePsram() / 1024.0 / 1024.0, 3) + " MiB";
+			
+			answer += "\r\nFlash 模式: ";
+			switch (ESP.getFlashChipMode()) {
+				case FM_QIO:
+					answer += "QIO";
+					break;
+				case FM_QOUT:
+					answer += "QOUT";
+					break;
+				case FM_DIO:
+					answer += "DIO";
+					break;
+				case FM_DOUT:
+					answer += "DOUT";
+					break;
+				case FM_FAST_READ:
+					answer += "FAST_READ";
+					break;
+				case FM_SLOW_READ:
+					answer += "SLOW_READ";
+					break;
+				case FM_UNKNOWN:
+					answer += "UNKNOWN";
+					break;
+				default:
+					answer += "UNKNOWN";
+					break;
+			}
+			answer += "\r\nFlash 大小: " + String(ESP.getFlashChipSize() / 1024.0 / 1024.0) + " MiB";
+			answer += "\r\nFlash 频率: " + String(ESP.getFlashChipSpeed() / 1000000.0) + " MHz";
+			
+			answer += "\r\nSDK 版本: " + String(ESP.getSdkVersion());
+
+			main_label_set_text(answer.c_str());
+			vTaskDelay(100 / portTICK_PERIOD_MS);
+			if (check_key()) break;
 		}
-		answer += "\r\nFlash 大小: " + String(ESP.getFlashChipSize() / 1024.0 / 1024.0) + " MiB";
-		answer += "\r\nFlash 频率: " + String(ESP.getFlashChipSpeed() / 1000000.0) + " MHz";
-		
-		answer += "\r\nSDK 版本: " + String(ESP.getSdkVersion());
-		Serial.println(answer);
+		answer = "无";
 		return;
 	}
 	if (_user_prompt.startsWith("-bl=")) {
@@ -373,8 +517,10 @@ void getAnswer(String& _user_prompt) {
 				spi_mux_unlock(); // 解锁
 			}
 			return;
-		} else if (_user_prompt[3] <= 9 && _user_prompt[3] >= 0) { // -sdx -> 读取 SD 卡根目录下 lcd-tx.txt 文件
-			read_file_name = "lcd-t" + String(_user_prompt[3]) + ".txt";
+		}
+		// 继续解析用户 要读取的文件名    -sd-xx -> 读取 SD 卡根目录下 lcd-txx.txt 文件
+		else if (_user_prompt.indexOf('-') == 3 && _user_prompt.length() > 4) {
+			read_file_name = "lcd-t" + _user_prompt.substring(_user_prompt.indexOf('-') + 1) + ".txt";
 		}
 		else { // -sd -> 读取 SD 卡根目录下 lcd-t1.txt 文件
 			read_file_name = "lcd-t1.txt";
@@ -595,36 +741,73 @@ void setup() {
 	hardware_init();  // 硬件 初始化
 	
 	// 声明字体
-	// LV_FONT_DECLARE(siyuan_normal_ext);
 	LV_FONT_DECLARE(cgr_yuyag_w2_ext4);
 
-	// 创建 main_panel 和 main_label
-    main_panel = lv_obj_create(lv_scr_act());
-	lv_obj_align(main_panel, LV_ALIGN_TOP_LEFT, 5, 54);
-    lv_obj_set_size(main_panel, 310, 186);
+	// ----- 定义样式 -----
+	lv_style_init(&style_pinyin);
+	/* 背景 */
+	lv_style_set_bg_color(&style_pinyin, lv_color_white());
+	lv_style_set_bg_opa(&style_pinyin, LV_OPA_COVER);
+	lv_style_set_radius(&style_pinyin, 6);
+	/* 边框 */
+	lv_style_set_border_width(&style_pinyin, 2);
+	lv_style_set_border_color(&style_pinyin, lv_color_hex(0xD2D2D2));
+	/* 阴影 */
+	lv_style_set_shadow_width(&style_pinyin, 6);
+	lv_style_set_shadow_color(&style_pinyin, lv_color_black());
+	lv_style_set_shadow_opa(&style_pinyin, LV_OPA_10);
+	lv_style_set_shadow_ofs_y(&style_pinyin, 2);
+	/* 内边距 */
+	lv_style_set_pad_left(&style_pinyin, 4);
+	lv_style_set_pad_right(&style_pinyin, 4);
+	lv_style_set_pad_top(&style_pinyin, 1);
+	lv_style_set_pad_bottom(&style_pinyin, 6);
+	/* 文字 */
+	lv_style_set_text_font(&style_pinyin, &cgr_yuyag_w2_ext4);
 
-    main_label = lv_label_create(main_panel);
-    lv_obj_set_size(main_label, 295, 4500);
-	lv_label_set_recolor(main_label, true);
-	lv_obj_set_style_text_font(main_label, &cgr_yuyag_w2_ext4, 0);
-	// lv_obj_set_style_text_font(main_label, &siyuan_normal_ext, 0);
-	lv_obj_align(main_label, LV_ALIGN_TOP_MID, 0, 0);
-	lv_label_set_text(main_label, "");
-	lv_obj_set_scroll_dir(main_label, LV_DIR_VER);
-
-    // 创建文本框
+	// 创建 输入框
     ta = lv_textarea_create(lv_scr_act());
     lv_textarea_set_one_line(ta, false);
     lv_obj_set_style_text_font(ta, &cgr_yuyag_w2_ext4, 0);
-    lv_obj_align(ta, LV_ALIGN_TOP_LEFT, 5, 3);
-    lv_obj_set_size(ta, 310, 46);// w:310
+    lv_obj_align(ta, LV_ALIGN_TOP_LEFT, 4, 4);
+    lv_obj_set_size(ta, LV_PCT(98), 46);
     lv_obj_add_state(ta, LV_STATE_FOCUSED);  /* 默认聚焦 */
+	
+	// 创建 main_panel 和 main_label
+    main_panel = lv_obj_create(lv_scr_act());
+	lv_obj_align(main_panel, LV_ALIGN_TOP_LEFT, 4, 54);
+    lv_obj_set_size(main_panel, LV_PCT(98), LV_PCT(77));
+	lv_obj_align_to(main_panel, ta, LV_ALIGN_OUT_BOTTOM_MID, 0, 4);
+	lv_obj_set_scroll_dir(main_panel, LV_DIR_VER);
 
-    // 创建键盘 (隐藏按键)
-	g_kb = lv_keyboard_create(lv_scr_act());
-    lv_obj_add_flag(g_kb, LV_OBJ_FLAG_HIDDEN);  /* 直接隐藏键盘 */
-    lv_keyboard_set_textarea(g_kb, ta);
-	lv_obj_add_event_cb(ta, ta_event_cb, LV_EVENT_ALL, g_kb);  
+    main_label = lv_label_create(main_panel);
+    lv_obj_set_size(main_label, LV_PCT(101), 4500);
+	lv_label_set_recolor(main_label, true);
+	lv_obj_set_style_text_font(main_label, &cgr_yuyag_w2_ext4, 0);
+	lv_obj_align(main_label, LV_ALIGN_TOP_LEFT, -6, -6);
+	lv_label_set_text(main_label, "");
+
+    // 创建键盘 (隐藏)
+	kb = lv_keyboard_create(lv_scr_act());
+    lv_obj_add_flag(kb, LV_OBJ_FLAG_HIDDEN);
+    lv_keyboard_set_textarea(kb, ta);
+	lv_obj_add_event_cb(ta, ta_event_cb, LV_EVENT_ALL, kb);
+
+	// 创建 拼音输入框 (隐藏)
+	pinyin_input_l = lv_label_create(lv_scr_act());
+	lv_obj_add_flag(pinyin_input_l, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_size(pinyin_input_l, LV_PCT(95), 30);
+	lv_obj_align_to(pinyin_input_l, ta, LV_ALIGN_OUT_BOTTOM_MID, 0, 2);
+	lv_obj_add_style(pinyin_input_l, &style_pinyin, LV_STATE_DEFAULT);
+	lv_label_set_text(pinyin_input_l, "");
+	
+	// 创建 候选词栏 (隐藏)
+	candidate_l = lv_label_create(lv_scr_act());
+	lv_obj_add_flag(candidate_l, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_size(candidate_l, LV_PCT(95), 54);
+	lv_obj_align_to(candidate_l, pinyin_input_l, LV_ALIGN_OUT_BOTTOM_MID, 0, -2);
+	lv_obj_add_style(candidate_l, &style_pinyin, LV_STATE_DEFAULT);
+	lv_label_set_text(candidate_l, "");
 
 	// 启动 C3 从机
 	// Serial1.write("`");
@@ -642,4 +825,5 @@ void setup() {
 }
 
 
-// 0x001d5fff
+// 0x001e4fff
+

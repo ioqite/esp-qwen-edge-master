@@ -3,9 +3,9 @@
  * @file           : zh_pinyin_decoder.h
  * @original_author: FriedParrot (https://github.com/FriedParrot)
  * @author         : Ported by Ioqit (https://github.com/Ioqite)
- * @version        : v2.0-arduino
+ * @version        : v1.6-arduino
  * @original_date  : 2024-09-20
- * @date           : 2026-05-09 (last modified)
+ * @date           : 2026-05-04 (last modified)
  * @derived_from   : by FriedParrot/zh_pinyin_decoder(v1.6) (https://github.com/FriedParrot/zh_pinyin_decoder)
  * @brief          : 中文拼音输入法的头文件 - Header file for chinese pinyin inputting method
  * @copyright      : Copyright (c) 2024 FriedParrot
@@ -34,10 +34,9 @@
 #include <stdio.h>
 #include <string.h>
 
-// // 用于切割匹配结果字符串
-// #include <codecvt>
-// #include <locale>
-#include <vector>
+// 用于切割匹配结果字符串
+#include <codecvt>
+#include <locale>
 
 #if (USE_FAT_FS == 1)
 #include "FFat.h"
@@ -187,34 +186,31 @@ __split_method_list_t* zh_pinyin_get_split(const char* str);
 uint8_t zh_pinyin_filter_split(__split_method_list_t* m_list);
 void zh_pinyin_free_split(__split_method_list_t* m_list);
 
+
 #if (USE_ZH_WORD_MATCH == 1)
 
 __word_block_t* zh_match_word(const char* str, __split_method_t* sp);
 void zh_word_free_match(__word_block_t* blk);
 
+
 #endif // USE_ZH_WORD_MATCH
 
 // Arduino移植过程中添加的函数 - Functions added during the Arduino porting process
 
-class ZhPinyinDecoder {
-    public:
-        ZhPinyinDecoder();
-        ~ZhPinyinDecoder();
+// 初始化拼音识别器
+int8_t zh_pinyin_begin();
+// 关闭拼音识别器
+int8_t zh_pinyin_end();
 
-        // 单个汉字模糊匹配 (vague match)
-        std::vector<String> char_match(const String input_str);
-
-#if (USE_ZH_WORD_MATCH == 1)
-        // 获取拼音分词结果
-        std::vector<String> word_match(const String input_str);
-        std::vector<String> word_match_and_split(const String input_str, String &split_result);
-#endif // USE_ZH_WORD_MATCH
-
-};
+// 转化(convert) utf-8 string 到(to) utf-32 string
+std::u32string u8_to_u32(std::string str);
+// 转化(convert) utf-32 string 到(to) utf-8 string
+std::string u32_to_u8(std::u32string str32);
 
 
 // 显示拼音分词结果
-// void zh_pinyin_show_split(const char* str, const __split_method_list_t* m_list);
+void zh_pinyin_show_split(const char* str, const match_case_list_t* m_list);
+
 
 #ifdef __cplusplus
     }

@@ -1,9 +1,9 @@
 /**
  ***************************** 声明 - Declaration ********************************
- * @file           : test_ffat-arduino.ino
+ * @file           : test_ffat_fs.cpp
  * @author         : Ioqit (https://github.com/Ioqite)
- * @version        : v2.0-arduino
- * @date           : 2026-05-09  (last modified)
+ * @version        : based on v1.6
+ * @date           : 2026-05-04  (last modified)
  * @brief          : 测试FFat文件系统 - Test program for FFat file system
  * @license        : MIT license (https://opensource.org/license/mit)
  *****************************************************************************

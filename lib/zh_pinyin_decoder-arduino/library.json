@@ -1,6 +1,6 @@
 {
     "name": "zh_pinyin_decoder-arduino",
-    "version": "2.0-arduino",
+    "version": "1.6-arduino",
     "description": "zh_pinyin_decoder 的 Arduino 移植版本",
     "keywords": "arduino, pinyin, decoder",
     "repository": {

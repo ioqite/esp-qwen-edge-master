@@ -40,7 +40,7 @@ lv_disp_drv_t disp_drv;
 lv_obj_t * main_panel;
 lv_obj_t * main_label;
 lv_obj_t * ta;
-lv_obj_t * g_kb;
+lv_obj_t * kb;
 
 // GMT 时间偏移量 (秒)
 #define GMT_OFFSET_SEC 8 * 3600
@@ -59,6 +59,8 @@ bool asr_idle = 1;      // 是否空闲
 String tmp_output;      // 临时文本输出
 JsonDocument tmp_doc;   // 临时 JSON 对象
 int eventIdCounter = 0; // 事件ID计数器
+size_t bytes_read = 0;
+uint32_t recordingSize = 0;
 
 // 状态变量
 bool transferring_key = 0;     // 开始接收新的键 (有的键是多字母的)
@@ -66,6 +68,17 @@ bool skip_wifi = 0;            // 是否跳过WiFi连接
 bool connecting_wifi = false;  // 是否正在连接WiFi
 bool syncing_sntp = false;     // 是否正在同步SNTP时间
 String proc_key;   // 处理中的按键
+
+#define MOVE_WORDS 6  // 一次移动词数
+lv_style_t style_pinyin;
+std::vector<String> word_result; // 候选词列表
+String candidate_str = ""; // 候选词列表 的 字符串
+lv_obj_t * candidate_l;    // 候选词显示框
+lv_obj_t * pinyin_input_l; // 拼音输入框
+String pinyin_str = "";    // 拼音输入框 的 字符串(手动同步)
+String split_result = "";  // 拼音分割结果
+uint16_t candidate_offset = 0; // 候选词显示框 的 偏移词数
+bool typing_pinyin = false; // 是否正在输入拼音标志
 
 // ###################### 对话管理 #########################
 // 最大对话窗口 个数
@@ -256,7 +269,53 @@ void setupI2S() {
 	Serial.println("OK!");
 }
 
+void generate_wav_header(char* wav_header, uint32_t wav_size, uint32_t sample_rate){
+    // See this for reference: http://soundfile.sapp.org/doc/WaveFormat/
+    uint32_t file_size = wav_size + WAVE_HEADER_SIZE - 8;
+    const char set_wav_header[] = {
+        'R','I','F','F', // ChunkID
+        (char)file_size, (char)(file_size >> 8), (char)(file_size >> 16), (char)(file_size >> 24), // ChunkSize
+        'W','A','V','E', // Format
+        'f','m','t',' ', // Subchunk1ID
+        0x10, 0x00, 0x00, 0x00, // Subchunk1Size (16 for PCM)
+        0x01, 0x00, // AudioFormat (1 for PCM)
+        0x01, 0x00, // NumChannels (1 channel)
+        (char)sample_rate, (char)(sample_rate >> 8), (char)(sample_rate >> 16), (char)(sample_rate >> 24), // SampleRate
+        (char)BYTE_RATE, (char)(BYTE_RATE >> 8), (char)(BYTE_RATE >> 16), (char)(BYTE_RATE >> 24), // ByteRate
+        0x02, 0x00, // BlockAlign
+        0x10, 0x00, // BitsPerSample (16 bits)
+        'd','a','t','a', // Subchunk2ID
+        (char)wav_size, (char)(wav_size >> 8), (char)(wav_size >> 16), (char)(wav_size >> 24), // Subchunk2Size
+    };
+    memcpy(wav_header, set_wav_header, sizeof(set_wav_header));
+}
 
+// 录音 PCM 音频 (需手动 释放内存)
+void record_pcm(const char *key) {
+	bytes_read = 0;
+	recordingSize = 0;
+	
+	// 分配 pcm_data
+	pcm_data = (uint16_t *)ps_malloc(BUFFER_SIZE * sizeof(uint16_t));
+	if (!pcm_data) {
+		Serial.println("Failed to allocate memory for pcm_data from PSRAM");
+		main_label_add_text("Failed to allocate memory for pcm_data from PSRAM");
+		return;
+	}
+	
+	uint32_t start_time = millis();
+	// 开始循环录音
+	while (recordingSize < MAX_RECORD_TIME_SECONDS * SAMPLE_RATE) {
+		esp_err_t err = i2s_read(I2S_PORT, pcm_data + recordingSize, CHUNK_SIZE * sizeof(uint16_t), &bytes_read, portMAX_DELAY);
+		if (err != ESP_OK) continue;
+		recordingSize += bytes_read / 2;
+
+		if (millis() - start_time > 240) { // 每 240ms 检查一次是否松开录音按钮（按键发送间隔是 240ms）
+			start_time = millis();
+			if (!check_key(1, "&1")) break;
+		}
+	}
+}
 
 // ############################### 请求 ##################################
 
@@ -677,6 +736,79 @@ void main_label_tmp_show(const char* text, uint16_t delay_ms = 700) {
 }
 
 
+void word_match(const String &input_str, std::vector<String> &word_result, String &split_result) {
+	split_result = "";
+	word_result.clear();
+	if (!input_str.length()) {
+		Serial.println("[Error] word_match(): input_str is empty!");
+		return;
+	}
+
+	match_case_node_t sp;
+	uint16_t idx = 0;
+
+	clock_t start_time = clock();
+	word_dict_search_result_t *blk = zh_match_word(input_str.c_str(), &sp);
+	clock_t end_time = clock();
+
+	uint8_t loc = 0;
+	for (int i = 0; i < strlen(input_str.c_str()); i++) {
+		if (i == sp.spm[loc]) {
+			split_result += "'";
+			loc++;
+		}
+		split_result += input_str.c_str()[i];
+	}
+	char code_str[3 * MAX_WORD_LENGTH + 1];
+	for (word_dict_search_result_t *w = blk; w != NULL; w = w->next) {
+		if (w->type == WORD_BLK_TYPE_CODES) {
+			for (int i = 0; i < w->num.code_nbr; i++) {
+				idx++;
+				strncpy(code_str, w->buf + 3 * i, 3);
+				code_str[3] = '\0';
+				word_result.push_back(code_str);
+			}
+		} else { /* WORD_BLK_TYPE_WORDS */
+			uint16_t buf_idx = 0;
+			for (int i = 0; w->num.word_nbr[i] != 0; i++) {
+				idx++;
+				// Serial.println();
+				// Serial.println(3 * w->num.word_nbr[i]);
+				strncpy(code_str, w->buf + buf_idx, 3 * w->num.word_nbr[i]);
+				buf_idx += 3 * w->num.word_nbr[i];
+				code_str[3 * w->num.word_nbr[i]] = '\0';
+				word_result.push_back(code_str);
+			}
+		}
+	}
+	zh_word_free_match(blk);
+}
+
+void update_candidate() {
+	candidate_str = "";
+	if (word_result.empty()) {
+		Serial.println("匹配结果为空");
+		if (lvgl_mux_lock()) {  // 上锁
+			lv_label_set_text(candidate_l, "");
+			lvgl_mutex_unlock(); // 解锁
+		}
+		return;
+	}
+	candidate_offset = constrain(candidate_offset, 0, word_result.size()-1);
+	for (int i=candidate_offset, j=1; i<word_result.size(); i++, j++) {
+		candidate_str += String(j) + "." + word_result[i] + " ";
+	}
+	Serial.println(candidate_str);
+	if (lvgl_mux_lock()) {  // 上锁
+		lv_label_set_text(candidate_l, candidate_str.c_str());
+		lvgl_mutex_unlock(); // 解锁
+	}
+}
+
+void update_word_match() {
+	word_match(pinyin_str, word_result, split_result);
+	update_candidate();
+}
 // 读取 IMU 数据, 并 更新滚动位置
 void my_read_imu() {
     IMU.update();
@@ -732,12 +864,12 @@ void send_key_to_ta(uint32_t key) {
     if(ta) {
 		if (lvgl_mux_lock()) { // 上锁
 			lv_obj_add_state(ta, LV_STATE_FOCUSED);
-			// 发送给键盘 (g_kb)
-			if(g_kb) {
-				// Serial.printf("send_key_to_ta: g_kb: %c\r\n", (char)key);
+			// 发送给键盘 (kb)
+			if(kb) {
+				// Serial.printf("send_key_to_ta: kb: %c\r\n", (char)key);
 				// 向文本框发送 KEY 事件
 				lv_event_send(ta, LV_EVENT_KEY, &key);
-			} else Serial.println("send_key_to_ta: g_kb is NULL!");
+			} else Serial.println("send_key_to_ta: kb is NULL!");
 			
 			lvgl_mutex_unlock();
 		}

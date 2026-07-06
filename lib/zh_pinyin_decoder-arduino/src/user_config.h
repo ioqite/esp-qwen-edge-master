@@ -3,9 +3,9 @@
  * @file           : user_config.h
  * @original_author: FriedParrot (https://github.com/FriedParrot)
  * @author         : Ported by Ioqit (https://github.com/Ioqite)
- * @version        : v2.0-arduino
+ * @version        : v1.6-arduino
  * @original_date  : 2024-09-20
- * @date           : 2026-05-09 (last modified)
+ * @date           : 2026-05-04 (last modified)
  * @derived_from   : by FriedParrot/zh_pinyin_decoder(v1.6) (https://github.com/FriedParrot/zh_pinyin_decoder)
  * @brief          : 中文拼音解码输入法的用户配置文件 - User configuration file for chinese pinyin decoding inputting method
  * @copyright      : Copyright (c) 2024 FriedParrot

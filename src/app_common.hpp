@@ -1,4 +1,4 @@
-// ======== esp32s3-lcd-2 ========
+
 #pragma once
 
 // 必要
@@ -36,7 +36,7 @@
 #include <pthread.h>
 #include "time.h"
 #include "ArduinoCalc.hpp"
-
+#include <zh_pinyin_decoder.hpp>
 
 // ###################### API #########################
 #define API_ENDPOINT "https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation"
@@ -63,6 +63,8 @@
 #define MAX_RECORD_TIME_SECONDS 30    // 最大录音时间 (秒)
 #define BUFFER_SIZE (SAMPLE_RATE * MAX_RECORD_TIME_SECONDS)  // 缓冲区大小 (16bit 个数)
 #define CHUNK_SIZE 2048
+#define WAVE_HEADER_SIZE 44
+#define BYTE_RATE (SAMPLE_RATE * 2) // 采样率 * 采样点字节数 (16bit = 2字节)
 
 // LCD 引脚定义
 #define LCD_SCLK 39  // LCD 时钟 引脚

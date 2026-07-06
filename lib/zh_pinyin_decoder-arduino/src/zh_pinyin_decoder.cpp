@@ -3,9 +3,9 @@
  * @file           : zh_pinyin_decoder.cpp
  * @original_author: FriedParrot (https://github.com/FriedParrot)
  * @author         : Ported by Ioqit (https://github.com/Ioqite)
- * @version        : v2.0-arduino
+ * @version        : v1.6-arduino
  * @original_date  : 2024-09-20
- * @date           : 2026-05-09 (last modified)
+ * @date           : 2026-05-04 (last modified)
  * @derived_from   : by FriedParrot/zh_pinyin_decoder(v1.6) (https://github.com/FriedParrot/zh_pinyin_decoder)
  * @brief          : 中文拼音输入法的解码器源文件 - Decoder source file for chinese pinyin inputting method
  * @copyright      : Copyright (c) 2024 FriedParrot
@@ -853,8 +853,6 @@ __split_method_list_t* zh_pinyin_get_split(const char* str) {
     g_word_match_number = 0;
     uint8_t spm[MAX_WORD_LENGTH] = { 0, 0, 0, 0 };
     if (pinyin_dfs(m_list, str, spm, 0, 0) || m_list->head == NULL) return NULL;
-
-    if (zh_pinyin_filter_split(m_list)) return NULL;   /* filter the split string method */
     return m_list;
 }
 
@@ -922,6 +920,7 @@ __word_block_t* zh_match_word(const char* str, __split_method_t *sp) {
 
     /* split pinyin */
     __split_method_list_t* m_list = zh_pinyin_get_split(str);
+    if (zh_pinyin_filter_split(m_list)) return NULL;   /* filter the split string method */
     
     if (sp != NULL) memcpy(sp, m_list->head, sizeof(__split_method_t));
     __word_block_t *w = word_dict_search(str, m_list);
@@ -935,19 +934,19 @@ void zh_word_free_match(__word_block_t* blk){
 
 #endif
 
-ZhPinyinDecoder::ZhPinyinDecoder() {
+int8_t zh_pinyin_begin() {
     if(!FS_is_begin) {
 #if (USE_FAT_FS == 1)
         if(!FFat.begin(0, "", 2)){
-            ZH_LOG_ERROR("An Error has occurred while mounting FFat file system");
+            ZH_LOG_ERROR("An Error has occurred while mounting file system");
 #elif (USE_LITTLE_FS == 1)
         if(!LittleFS.begin()){
-            ZH_LOG_ERROR("An Error has occurred while mounting LittleFS file system");
+            ZH_LOG_ERROR("An Error has occurred while mounting file system");
 #else
         if (1) {
             ZH_LOG_ERROR("Choose a file system in user_config.h first !!!");
 #endif
-            return;
+            return 1;
         } else FS_is_begin = true;
     }
 
@@ -957,11 +956,11 @@ ZhPinyinDecoder::ZhPinyinDecoder() {
     file_code_table = LittleFS.open(ZH_CODE_TABLE_FILE_NAME, FILE_READ);
 #else
     ZH_LOG_ERROR("Choose a file system in user_config.h first !!!");
-    return;
+    return 1;
 #endif
     if (!file_code_table) {
         ZH_LOG_ERROR("Failed to open file for reading");
-        return;
+        return 1;
     }
 #if (USE_FAT_FS == 1)
     file_word_dict = FFat.open(ZH_WORD_DICTIONARY_FILE_NAME, FILE_READ);
@@ -969,134 +968,49 @@ ZhPinyinDecoder::ZhPinyinDecoder() {
     file_word_dict = LittleFS.open(ZH_WORD_DICTIONARY_FILE_NAME, FILE_READ);
 #else
     ZH_LOG_ERROR("Choose a file system in user_config.h first !!!");
-    return;
+    return 1;
 #endif
     if (!file_code_table) {
         ZH_LOG_ERROR("Failed to open file for reading");
-        return;
+        return 1;
     }
+    return 0;
 }
 
-ZhPinyinDecoder::~ZhPinyinDecoder() {
+int8_t zh_pinyin_end() {
     file_code_table.close();
     file_word_dict.close();
     FS_is_begin = false;
+    return 0;
 }
 
-// 单个汉字模糊匹配 (vague match)
-std::vector<String> ZhPinyinDecoder::char_match(const String input_str) {
-    std::vector<String> zh_char_result;
-    if (input_str.isEmpty()) return zh_char_result;
+// 转化(convert) utf-8 string 到(to) utf-32 string
+std::u32string u8_to_u32(std::string str) { return std::wstring_convert< std::codecvt_utf8<char32_t>, char32_t >{}.from_bytes(str); }
+// 转化(convert) utf-32 string 到(to) utf-8 string
+std::string u32_to_u8(std::u32string str32) { return std::wstring_convert< std::codecvt_utf8<char32_t>, char32_t >{}.to_bytes(str32); }
 
-    uint8_t br;   // 匹配结果数量
-    char raw_result[MAX_CODE_BUFF_SZ]; // 所有匹配结果组成的字符串
 
-    // 模糊匹配
-    uint8_t res = zh_match_code_vague(input_str.c_str(), raw_result, MAX_CODE_SEARCH_TYPES, &br);
-    
-    if (res) {
-        ZH_LOG_ERROR("Match char failed : nothing to match");
-        return zh_char_result;
-    } else {
-        // 逆序截取所有结果 并 加入结果列表
-        for (int i = br - 1, j = 0; i >= 0; i--, j++) {
-            zh_char_result.push_back(String(raw_result + 3 * i, 3));
-        }
+// 显示拼音分词结果
+void zh_pinyin_show_split(const char* str, const __split_method_list_t* m_list) {
+    if (m_list == NULL || m_list->head == NULL) {
+        ZH_LOG_ERROR("Can't find the pinyin string to match !!!\n");
+        return;
     }
-    return zh_char_result;
+    __split_method_t* m = m_list->head;
+    ZH_LOG("-------------- split method length: %d ----------------\n", m_list->num);
+    for (int i = 0; i < m_list->num; i++) {
+        int j = 0;
+        for (int k = 0; k < strlen(str); k++) {
+            if (m->spm[j] == k) {
+                ZH_LOG(" ");
+                j++;
+            }
+            ZH_LOG(&str[k]);
+        }
+        char s_tmp[10];
+        __itoa(m->wt, s_tmp, 2);
+        ZH_LOG("\t length: %d, weight: %d (%s)\n", m->length, m->wt, s_tmp);
+        m = m->next;
+    }
 }
-
-#if (USE_ZH_WORD_MATCH == 1)
-// 获取拼音分词结果
-std::vector<String> ZhPinyinDecoder::word_match(const String input_str) {
-    std::vector<String> zh_word_result;
-    if (input_str.isEmpty()) {
-        ZH_LOG_ERROR("input_str is empty");
-        return zh_word_result;
-    }
-    match_case_node_t sp;
-    uint16_t idx = 0;
-    uint8_t loc = 0;
-
-    word_dict_search_result_t *blk = zh_match_word(input_str.c_str(), &sp);
-    
-    // 该重载 不处理 分词完毕的字符串
-
-    // 处理 匹配完成的词
-    char word_buff[3 * MAX_WORD_LENGTH + 1];
-    for (word_dict_search_result_t *w = blk; w != NULL; w = w->next) {
-        // 类型为 字
-        if (w->type == WORD_BLK_TYPE_CODES) {
-            for (int i = 0; i < w->num.code_nbr; i++) {
-                strncpy(word_buff, w->buf + 3 * i, 3 + 1);
-                *(word_buff + 3) = '\0'; // 在适当位置添加结束符, 来控制输出/处理时的长度
-                // zh_word_result[++idx] = word_buff;
-                zh_word_result.push_back(String(word_buff));
-            }
-        // 类型为 词
-        } else { /* WORD_BLK_TYPE_WORDS */
-            uint16_t buf_idx = 0;
-            for (int i = 0; w->num.word_nbr[i] != 0; i++, idx++) {
-                // strncpy(word_buff, w->buf + buf_idx, 3 * w->num.word_nbr[i]);
-                // word_buff[3 * w->num.word_nbr[i]] = '\0'; // 在适当位置添加结束符, 来控制输出/处理时的长度
-                // zh_word_result[idx] = std::move(String(word_buff));
-                zh_word_result.push_back(String(w->buf + buf_idx, 3 * w->num.word_nbr[i]));
-                buf_idx += 3 * w->num.word_nbr[i];
-            }
-        }
-    }
-    zh_word_free_match(blk);
-    return zh_word_result;
-}
-
-std::vector<String> ZhPinyinDecoder::word_match_and_split(const String input_str, String &split_result) {
-    std::vector<String> zh_word_result;
-    if (input_str.isEmpty()) {
-        ZH_LOG_ERROR("input_str is empty");
-        return zh_word_result;
-    }
-
-    match_case_node_t sp;
-    uint16_t idx = 0;
-    uint8_t loc = 0;
-
-    word_dict_search_result_t *blk = zh_match_word(input_str.c_str(), &sp);
-    
-    // 处理 分词完毕的字符串
-    for (int i = 0; i < strlen(input_str.c_str()); i++) {
-        if (i == sp.spm[loc]) {
-            split_result += '\'';
-            loc++;
-        }
-        split_result += input_str[i];
-    }
-
-    // 处理 匹配完成的词
-    char word_buff[3 * MAX_WORD_LENGTH + 1];
-    for (word_dict_search_result_t *w = blk; w != NULL; w = w->next) {
-        // 类型为 字
-        if (w->type == WORD_BLK_TYPE_CODES) {
-            for (int i = 0; i < w->num.code_nbr; i++) {
-                zh_word_result.push_back(String(w->buf + 3 * i, 3));
-            }
-        // 类型为 词
-        } else { /* WORD_BLK_TYPE_WORDS */
-            uint16_t buf_idx = 0;
-            for (int i = 0; w->num.word_nbr[i] != 0; i++, idx++) {
-                zh_word_result.push_back(String(w->buf + buf_idx, 3 * w->num.word_nbr[i]));
-                buf_idx += 3 * w->num.word_nbr[i];
-            }
-        }
-    }
-    zh_word_free_match(blk);
-    return zh_word_result;
-}
-#endif // USE_ZH_WORD_MATCH
-
-
-// // 转化(convert) utf-8 string 到(to) utf-32 string
-// std::u32string u8_to_u32(std::string str) { return std::wstring_convert< std::codecvt_utf8<char32_t>, char32_t >{}.from_bytes(str); }
-// // 转化(convert) utf-32 string 到(to) utf-8 string
-// std::string u32_to_u8(std::u32string str32) { return std::wstring_convert< std::codecvt_utf8<char32_t>, char32_t >{}.to_bytes(str32); }
-
 

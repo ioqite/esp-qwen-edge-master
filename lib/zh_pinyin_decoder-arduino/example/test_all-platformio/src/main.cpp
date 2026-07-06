@@ -3,9 +3,9 @@
  * @file           : main.cpp
  * @original_author: FriedParrot (https://github.com/FriedParrot)
  * @author         : Ported by Ioqit (https://github.com/Ioqite)
- * @version        : v2.0-arduino
+ * @version        : v1.6-arduino
  * @original_date  : 2024-09-20
- * @date           : 2026-05-09 (last modified)
+ * @date           : 2026-05-04 (last modified)
  * @derived_from   : by FriedParrot/zh_pinyin_decoder(v1.6) (https://github.com/FriedParrot/zh_pinyin_decoder)
  * @brief          : 中文拼音输入法的解码器示例程序 - Decoder example program for chinese pinyin inputting method
  * @copyright      : Copyright (c) 2024 FriedParrot
@@ -39,13 +39,10 @@ void test1();
 void test2();
 void test3();
 void test4();
-void zh_pinyin_show_split(String str, const match_case_list_t *m_list);
-
-ZhPinyinDecoder zh_decoder;
 
 void setup() {
     Serial.begin(115200);
-    
+    zh_pinyin_begin();
     Serial.println("\n============================= Test Start ==================================");
     test1(); // 词库完整性测试
     test2(); // 单个汉字模糊匹配测试
@@ -53,6 +50,7 @@ void setup() {
 #if (USE_ZH_WORD_MATCH == 1)
     test4(); // 带词库的完整的输入法测试 (无空格)
 #endif
+    zh_pinyin_end();
     Serial.println("\n============================= Test END ==================================\n");
 }
 
@@ -84,19 +82,39 @@ void test1() {
 // 单个汉字模糊匹配测试 (vague match test: input string for vague match)
 void test2() {
     Serial.println("\n*********** Test2: 单个汉字模糊匹配测试 (vague match test) ******************");
+    // Serial.printf("===================    enter \"exit()\" to exit  ====================================\n");
 
-    for (String input_str : {"de", "di", "du", "hao", "shi", "jie"}) {
-        clock_t start_time = clock(); // 计时
+    for (String input_str : {"de", "di", "du", "hao", "shi", "jie", "exit()"}) {
+    // while (1) {
+        // String input_str = Serial.readStringUntil('\n');
+        // input_str.trim();
+        // input_str.toLowerCase();
+        if (input_str == "exit()") break;
 
-        auto result = zh_decoder.char_match(input_str); // 模糊匹配
+        // 计时
+        clock_t start_time = clock();
 
-        Serial.printf("\nMatch: %s, Time: %d ms\n", input_str.c_str(), clock() - start_time);
-        if (result.empty()) {
-            Serial.println("\nMatch failed : nothing to match");
+        uint8_t br; // 匹配结果数量
+        char res_str2[MAX_CODE_BUFF_SZ]; // 所有匹配结果组成的字符串
+
+        // 模糊匹配
+        uint8_t res = zh_match_code_vague(input_str.c_str(), res_str2, MAX_CODE_SEARCH_TYPES, &br);
+        
+        Serial.printf("Search %s, Time: %d ms\n", input_str.c_str(), clock() - start_time);
+        if (res) {
+            Serial.println("match failed : nothing to match");
         } else {
-            // 显示匹配结果
-            for (int i = 0; i < result.size(); i++) {
-                Serial.printf("%d:%s  ", i+1, result[i].c_str());
+            // 分割所有结果并逆序输出, 显示匹配结果
+            for (int i = br - 1, j = 0; i >= 0; i--, j++) {
+                // 分割每个字符
+                std::string str_u8 = res_str2; // String -> std::string
+                std::u32string str_u32 = u8_to_u32(str_u8); // std::string -> std::u32string
+                std::u32string str_u32_subed = str_u32.substr(i, 1); // 截取单个字符
+                String s2 = u32_to_u8(str_u32_subed).c_str(); // std::u32string -> std::string -> String
+                Serial.printf("%d:%s", j + 1, s2.c_str());
+                if (i != 0) {
+                    Serial.print(", ");
+                }
             }
             Serial.println();
         }
@@ -106,14 +124,27 @@ void test2() {
 // 拼音分词测试 (无空格) (pinyin split test : mixed pinyin string (no space))
 void test3() {
     Serial.println("\n*********** Test3: 拼音分词测试 (pinyin split test) ******************");
+    // Serial.printf("===================    enter \"exit()\" to exit  ====================================\n");
 
-    for (String input_str : {"shijie", "nihao", "duqu", "haode", "wancheng"}) {
-        clock_t start_time = clock();
-        match_case_list_t* m_list = zh_pinyin_get_split(input_str.c_str());
-        clock_t end_time = clock();
+    // while (1) {
+    for (String input_str : {"de", "di", "du", "hao", "shi", "jie", "exit()"}) {
+		// String input_str = Serial.readStringUntil('\n');
+        // input_str.trim();
+        // input_str.toLowerCase();
 
-        zh_pinyin_show_split(input_str, m_list);
-        Serial.printf("Time : %d ms\n", end_time - start_time);
+        // string input_str;
+        // std::getline(std::cin, input_str);
+		
+        if (input_str == "exit()") break;
+
+        const char* s = input_str.c_str();
+        uint32_t start_time = clock();
+        __split_method_list_t* m_list = zh_pinyin_get_split(s);
+        zh_pinyin_filter_split(m_list);  /* use the filter option to eliminate unwanted result */
+        uint32_t end_time = clock();
+        zh_pinyin_show_split(s, m_list);
+        Serial.printf("splitting string take time : %d ms\n", end_time - start_time);
+        zh_pinyin_free_split(m_list);  /* free the space */
     }
 }
 
@@ -121,49 +152,60 @@ void test3() {
 // 带词库的完整的输入法测试 (无空格) (word match test : input mixed pinyin string (no space))
 void test4() {
     Serial.println("\n******************* Test4: 带词库的完整的输入法测试 (word match test) *******************");
-    for (String input_str : {"nihao", "shijie", "duqu", "shiwu", "weishenme"}) {
-        String split_result;    // 分词结果
-        
-        clock_t start_time = clock(); // 记时开始
-        auto result = zh_decoder.word_match_and_split(input_str, split_result); // 获取匹配结果
-        clock_t end_time = clock();   // 记时结束
-        
-        if (result.empty()) {
-            Serial.println("\nMatch failed : nothing to match");
-            continue;
+    // Serial.printf("===================    enter \"exit()\" to exit  ====================================\n");
+    
+    for (String input_str : {"nihao", "shijie", "duqu", "shiwu", "weishenme", "exit()"}) {
+    // while (1) {
+		// String input_str = Serial.readStringUntil('\n');
+		// input_str.trim();
+        // input_str.toLowerCase();
+
+        if (input_str == "exit()") break;
+
+        // 这是一个用于声明 __word_block_t 存储结构的简单代码
+        // This is a simple code for declare the storge structure of __word_block_t
+        match_case_node_t sp;
+        uint16_t idx = 0;
+
+        clock_t start_time = clock();
+        word_dict_search_result_t *blk = zh_match_word(input_str.c_str(), &sp);
+        clock_t end_time = clock();
+
+        uint8_t loc = 0;
+        Serial.println("\n");
+        for (int i = 0; i < strlen(input_str.c_str()); i++) {
+            if (i == sp.spm[loc]) {
+                Serial.print("'");
+                loc++;
+            }
+            Serial.print(input_str.c_str()[i]);
         }
-        Serial.printf("\nMatch: %s, Time: %d ms\n", split_result.c_str(), end_time - start_time);
-        
-        for (uint8_t i = 0; i < result.size();) {
-            Serial.printf("%d: %s  ", i+1, result[i++].c_str());
+        Serial.printf(", %d ms\n", end_time - start_time);
+        char code_str[3 * MAX_WORD_LENGTH + 1];
+        for (word_dict_search_result_t *w = blk; w != NULL; w = w->next) {
+            if (w->type == WORD_BLK_TYPE_CODES) {
+                for (int i = 0; i < w->num.code_nbr; i++) {
+                    idx++;
+                    strncpy(code_str, w->buf + 3 * i, 3);
+                    code_str[3] = '\0';
+                    Serial.printf("%d: %s ", idx, code_str);
+                }
+            } else { /* WORD_BLK_TYPE_WORDS */
+                uint16_t buf_idx = 0;
+                for (int i = 0; w->num.word_nbr[i] != 0; i++) {
+                    idx++;
+                    // Serial.println();
+                    // Serial.println(3 * w->num.word_nbr[i]);
+                    strncpy(code_str, w->buf + buf_idx, 3 * w->num.word_nbr[i]);
+                    buf_idx += 3 * w->num.word_nbr[i];
+                    code_str[3 * w->num.word_nbr[i]] = '\0';
+                    Serial.printf("%d: %s ", idx, code_str);
+                }
+            }
         }
-        Serial.println();
+        zh_word_free_match(blk);
     }
 }
 #endif
 
-// 显示拼音分词结果
-void zh_pinyin_show_split(String str, const match_case_list_t* m_list) {
-    if (m_list == NULL || m_list->head == NULL) {
-        Serial.println("\n找不到匹配的拼音字符串 !!!");
-        return;
-    }
-    match_case_node_t* m = m_list->head;
-    Serial.printf("-------------- 分割方法: %d 种 ----------------\n", m_list->num);
-    for (int i = 0; i < m_list->num; i++) {
-        int j = 0;
-        for (int k = 0; k < str.length(); k++) {
-            if (m->spm[j] == k) { // 获取分割点 并 判断是否打印空格
-                Serial.print(" ");
-                j++;
-            }
-            Serial.print(str[k]);
-        }
-        // 转换权重为二进制(字符串)
-        char s_tmp[10];
-        __itoa(m->wt, s_tmp, 2);
-        Serial.printf("\t 长度: %d, 权重: %d (%s)\n", m->length, m->wt, s_tmp);
-        m = m->next;
-    }
-}
 
