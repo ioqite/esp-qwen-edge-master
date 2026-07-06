@@ -116,16 +116,13 @@ void my_loop(void *param) {
 			getAnswer(user_prompt);
 			if (answer.length()) main_label_set_text(answer.c_str()); // answer为空则不更新
 		} else if (proc_key == "BCK") {
-			if (lvgl_mux_lock()) { // 上锁
-				pinyin_str = lv_label_get_text(pinyin_input_l); // 同步文本
-				lvgl_mutex_unlock(); // 解锁
-			}
 			if (typing_pinyin && pinyin_str.length()) { // 拼音输入模式
 				candidate_offset = 0;
 				pinyin_str = pinyin_str.substring(0, pinyin_str.length() - 1);
 				if (lvgl_mux_lock()) { // 上锁
 					lv_label_set_text(pinyin_input_l, pinyin_str.c_str());
-					if (!pinyin_str.length()) lv_label_set_text(candidate_l, "");
+					if (!pinyin_str.length()) clear_pinyin(); // pinyin_str为空，清空所有变量
+					
 					lvgl_mutex_unlock(); // 解锁
 				}
 				if (pinyin_str.length()) update_word_match();
@@ -154,14 +151,9 @@ void my_loop(void *param) {
 			if (typing_pinyin) { // 拼音输入模式: 将 拼音输入框 的文本 转移到 文本文本框(ta), 并关闭 拼音输入模式
 				if (lvgl_mux_lock()) { // 上锁
 					lv_textarea_add_text(ta, lv_label_get_text(pinyin_input_l));
-
-					lv_label_set_text(candidate_l, "");
-					lv_label_set_text(pinyin_input_l, "");
+					clear_pinyin();
 
 					lvgl_mutex_unlock(); // 解锁
-					word_result.clear();
-					pinyin_str = "";
-					candidate_offset = 0;
 				}
 			} else { // 正常输入模式
 				send_key_to_ta(LV_KEY_ENTER);
@@ -300,78 +292,64 @@ void my_loop(void *param) {
 
 			if (lvgl_mux_lock()) { // 上锁
 				if (typing_pinyin) { // 切换到了 拼音输入模式
+					clear_pinyin();
 					lv_obj_clear_flag(candidate_l, LV_OBJ_FLAG_HIDDEN);
 					lv_obj_clear_flag(pinyin_input_l, LV_OBJ_FLAG_HIDDEN);
-					lv_label_set_text(candidate_l, "");
-					lv_label_set_text(pinyin_input_l, "");
-					pinyin_str = "";
-					word_result.clear();
-					candidate_offset = 0;
 				} else { // 退出了 拼音输入模式
-					lv_label_set_text(candidate_l, "");
-					lv_label_set_text(pinyin_input_l, "");
 					lv_obj_add_flag(candidate_l, LV_OBJ_FLAG_HIDDEN);
 					lv_obj_add_flag(pinyin_input_l, LV_OBJ_FLAG_HIDDEN);
+					clear_pinyin();
 				}
 				lvgl_mutex_unlock(); // 解锁
 			}
 		} else {
-			if (lvgl_mux_lock()) { // 上锁
-				// 拼音输入下的 字母输入
-				if (typing_pinyin && proc_key[0] >= 'a' && proc_key[0] <= 'z') {
-					pinyin_str += proc_key;
+			// 拼音输入下的 字母输入
+			if (typing_pinyin && proc_key[0] >= 'a' && proc_key[0] <= 'z') {
+				pinyin_str += proc_key;
+				if (lvgl_mux_lock()) { // 上锁
 					lv_label_set_text(pinyin_input_l, pinyin_str.c_str());
 					lvgl_mutex_unlock(); // 解锁
-					update_word_match();
 				}
-				// 选择候选词:  拼音输入模式  &&  word_result不为空     &&       proc_key 在 1 ~ 9 中
-				else if (typing_pinyin && word_result.size() > 0 && proc_key[0] >= '1' && proc_key[0] <= '9') {
-					if (proc_key.toInt()+candidate_offset <= word_result.size()) { // proc_key加偏移 超过 word_result 长度, 忽略
+				update_word_match();
+			}
+			// 选择候选词:  拼音输入模式  &&  word_result不为空     &&       proc_key 在 1 ~ 9 中
+			else if (typing_pinyin && word_result.size() > 0 && proc_key[0] >= '1' && proc_key[0] <= '9') {
+				if (proc_key.toInt()+candidate_offset <= word_result.size()) { // proc_key加偏移 超过 word_result 长度, 忽略
+					if (lvgl_mux_lock()) { // 上锁
 						lv_textarea_add_text(ta, word_result[ proc_key.toInt() + candidate_offset - 1 ].c_str());
-						lv_label_set_text(pinyin_input_l, "");
-						lv_label_set_text(candidate_l, "");
-						pinyin_str = "";
-						word_result.clear();
-						candidate_offset = 0;
+						clear_pinyin();
+						lvgl_mutex_unlock(); // 解锁
 					}
-					lvgl_mutex_unlock(); // 解锁
 				}
-				// 拼音输入下的 0 等同与 ETR(Enter)
-				else if (typing_pinyin && proc_key[0] == '0') {
+				
+			}
+			// 拼音输入下的 0 等同与 ETR(Enter)
+			else if (typing_pinyin && proc_key == "0") {
+				if (lvgl_mux_lock()) { // 上锁
 					lv_textarea_add_text(ta, lv_label_get_text(pinyin_input_l));
+					clear_pinyin();
 
-					lv_label_set_text(candidate_l, "");
-					lv_label_set_text(pinyin_input_l, "");
-
-					lvgl_mutex_unlock(); // 解锁
-					word_result.clear();
-					pinyin_str = "";
-					candidate_offset = 0;
-				}
-				// 拼音输入下的 [ -> offset-MOVE_WORDS (右移 MOVE_WORDS 项)
-				else if (typing_pinyin && proc_key == "[") {
-					lvgl_mutex_unlock(); // 解锁
-					
-					if (candidate_offset < MOVE_WORDS) {
-						candidate_offset = 0;
-					} else candidate_offset -= MOVE_WORDS;
-					update_candidate();
-				}
-				// 拼音输入下的 ] -> offset+MOVE_WORDS (左移 MOVE_WORDS 项)
-				else if (typing_pinyin && proc_key == "]") {
-					lvgl_mutex_unlock(); // 解锁
-					
-					if (candidate_offset+MOVE_WORDS*2 >= word_result.size()) {
-						candidate_offset = word_result.size() - MOVE_WORDS;
-					} else candidate_offset += MOVE_WORDS;
-					update_candidate();
-				}
-				// 拼音输入下的 其他字符 及 正常输入
-				else {
-					lv_textarea_add_text(ta, proc_key.c_str());
 					lvgl_mutex_unlock(); // 解锁
 				}
 			}
+			// 拼音输入下的 [ -> offset-MOVE_WORDS (右移 MOVE_WORDS 项)
+			else if (typing_pinyin && pinyin_str.length() && proc_key == "[") {
+				if (candidate_offset <= MOVE_WORDS) candidate_offset = 0;
+				else candidate_offset -= MOVE_WORDS;
+				update_candidate();
+			}
+			// 拼音输入下的 ] -> offset+MOVE_WORDS (左移 MOVE_WORDS 项)
+			else if (typing_pinyin && pinyin_str.length() && proc_key == "]") {
+				if (candidate_offset+MOVE_WORDS*2 >= word_result.size()) {
+					candidate_offset = word_result.size() - MOVE_WORDS;
+				} else candidate_offset += MOVE_WORDS;
+				update_candidate();
+			}
+			// 拼音输入下的 其他字符 及 正常输入
+			else {
+				ta_add_text(proc_key.c_str());
+			}
+			
 		// } else {
 			// // send_key_to_ta(proc_key[0]);
 			// ta_add_text(proc_key.c_str());
@@ -385,8 +363,9 @@ void my_loop(void *param) {
 
 		core0_loop_func();
 		
-		// 清空串口
-		while (Serial1.available()) Serial1.read();
+		// // 清空串口
+		// while (Serial1.available()) Serial1.read();
+		
 // 		vTaskDelay(1 / portTICK_PERIOD_MS);
 	}
 	vTaskDelete(NULL);

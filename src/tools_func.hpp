@@ -73,7 +73,7 @@ std::vector<String> word_result; // 候选词列表
 String candidate_str = ""; // 候选词列表 的 字符串
 lv_obj_t * candidate_l;    // 候选词显示框
 lv_obj_t * pinyin_input_l; // 拼音输入框
-String pinyin_str = "";    // 拼音输入框 的 字符串(手动同步)
+String pinyin_str = "";    // 拼音输入框 的 字符串(已实时同步)
 String split_result = "";  // 拼音分割结果
 uint16_t candidate_offset = 0; // 候选词显示框 的 偏移词数
 bool typing_pinyin = false; // 是否正在输入拼音标志
@@ -783,10 +783,19 @@ void word_match(const String &input_str, std::vector<String> &word_result, Strin
 	zh_word_free_match(blk);
 }
 
+// 清空 拼音输入框 与 候选栏 (未加锁)
+void clear_pinyin() {
+	lv_label_set_text(pinyin_input_l, "");
+	lv_label_set_text(candidate_l, "");
+	word_result.clear();
+	pinyin_str = "";
+	candidate_offset = 0;
+}
+
 // 更新 候选栏
 void update_candidate() {
 	candidate_str = "";
-	if (word_result.empty()) {
+	if (!pinyin_str.length() && word_result.empty()) {
 		Serial.println("匹配结果为空");
 		if (lvgl_mux_lock()) {  // 上锁
 			lv_label_set_text(candidate_l, "");
@@ -795,10 +804,9 @@ void update_candidate() {
 		return;
 	}
 	candidate_offset = constrain(candidate_offset, 0, word_result.size()-1);
-	for (int i=candidate_offset, j=1; i<word_result.size() && j<10; i++, j++) {
+	for (int i=candidate_offset, j=1; i<word_result.size(); i++, j++) {
 		candidate_str += String(j) + "." + word_result[i] + " ";
 	}
-	Serial.println(candidate_str);
 	if (lvgl_mux_lock()) {  // 上锁
 		lv_label_set_text(candidate_l, candidate_str.c_str());
 		lvgl_mutex_unlock(); // 解锁
@@ -807,6 +815,7 @@ void update_candidate() {
 
 // 更新 候选词 与 候选栏
 void update_word_match() {
+	candidate_offset = 0;
 	word_match(pinyin_str, word_result, split_result);
 	update_candidate();
 }
