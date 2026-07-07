@@ -16,10 +16,10 @@ void spi_mux_unlock() { xSemaphoreGiveRecursive(spi_mux); }
 TaskHandle_t TASK_Handle_WiFi = NULL;
 TaskHandle_t TASK_Handle_My_Loop = NULL;
 
-// SD卡状态 (正常则为空, 否则为 错误信息)
+// SD卡状态 (正常为空, 否则为 错误信息)
 String sd_status = "";
 
-double ledc_duty = LEDC_DEFAULT_DUTY;	// 默认占空比
+double bl_duty = LEDC_DEFAULT_DUTY;	// 默认占空比
 
 // IMU 和 鼠标指针
 QMI8658 IMU;
@@ -125,6 +125,12 @@ Arduino_GFX *gfx = new Arduino_ST7789(bus, LCD_RST, EXAMPLE_LCD_ROTATION, true /
 
 // ############################### 外设 ##################################
 
+// 设置背光亮度
+void set_bl_duty() {
+	bl_duty = constrain(bl_duty, 0, 100);
+	ledcWrite(LCD_BL , bl_duty ? (1 << LEDC_TIMER_10_BIT) / 100 * bl_duty : 0.2);
+}
+
 // 检查是否有按键按下, 0=无, 1=有
 bool check_key(bool use_filter = 0, const char *filter_key = NULL) {
 	if (!Serial1.available()) return 0;
@@ -151,7 +157,7 @@ String read_key() {
 	}
 }
 
-// 列出目录下的所有文件和子目录
+// 列出目录下的所有文件和子目录 (未加锁)
 void listDir(fs::FS &fs, const char *dirname, uint8_t levels, String& response) {
 	File root = fs.open(dirname);
 	if (!root) {
@@ -186,24 +192,94 @@ void listDir(fs::FS &fs, const char *dirname, uint8_t levels, String& response) 
 	response += "\r\n";
 }
 
+// 创建新目录 (未加锁)
+void createDir(fs::FS &fs, const char * path){
+    // 打印正在创建的目录
+    Serial.printf("Creating Dir: %s\n", path);
+    if(fs.mkdir(path)){
+    // 尝试创建目录，如果成功则打印成功信息，否则打印失败信息
+        Serial.println("Dir created");
+    } else {
+        Serial.println("mkdir failed");
+    }
+}
+
+// 将 JPEG图片数据 写入文件 (未加锁)
+void writejpg(fs::FS &fs, const char * path, const uint8_t *buf, size_t size){
+	// 打开文件用于写入
+	File file = fs.open(path, FILE_WRITE);
+	if(!file){
+		// 如果文件打开失败，打印错误信息
+		Serial.printf("[ERROR] Failed to open '%s'\r\n for writing", path);
+		return;
+	}
+	// 写入数据到文件
+	file.write(buf, size);
+	// 输出文件保存成功信息
+	Serial.printf("[INFO] Saved file to path: %s\r\n", path);
+}
+
+// 读取 指定目录下的文件数量 (未加锁)
+int readFileNum(fs::FS &fs, const char * dirname){
+	File root = fs.open(dirname);
+	if(!root){
+		Serial.printf("[ERROR] Failed to open '%s'\r\n", dirname);
+		return -1;
+	}
+	if(!root.isDirectory()){
+		Serial.printf("[ERROR] '%s' not a directory\r\n", dirname);
+		return -1;
+	}
+
+	File file = root.openNextFile();
+	int num = 0;
+	while(file){
+		//遍历文件个数
+		file = root.openNextFile();
+		num++;
+	}
+	return num;  
+}
+
+// 获取 指定目录中 下一个WAV文件的索引(名称) (未加锁)
+void getWavFileIdex(fs::FS &fs, const char * dirname, int &fileIndex){
+	File root = fs.open(dirname);
+	if(!root){
+		Serial.printf("[ERROR] Failed to open '%s'\r\n", dirname);
+		fileIndex = -1;
+		return;
+	}
+	if(!root.isDirectory()){
+		Serial.printf("[ERROR] '%s' not a directory\r\n", dirname);
+		fileIndex = -1;
+		return;
+	}
+
+	File file = root.openNextFile();
+	fileIndex = 0;
+	while(fs.exists(dirname + String(fileIndex++) + ".wav")) {}
+}
+
 // 初始化 SD 卡
 void init_SDcard() {
 	if (spi_mux_lock()) {   // 加锁
 		sd_spi_bus.begin(SD_SCK, SD_MISO, SD_MOSI, -1);
 		if (!SD.begin(SD_CS, sd_spi_bus)) {
-			Serial.println("Card Mount Failed");
-			sd_status = "Card Mount Failed";
+			Serial.println("SD卡 挂载失败");
+			sd_status = "SD卡 挂载失败";
+			spi_mux_unlock();
 			return;
 		}
 		uint8_t cardType = SD.cardType();
 
 		if (cardType == CARD_NONE) {
-			Serial.println("No SD card attached");
-			sd_status = "No SD card attached";
+			Serial.println("未检测到 SD卡");
+			sd_status = "未检测到 SD卡";
+			spi_mux_unlock();
 			return;
 		}
 
-		Serial.print("SD Card Type: ");
+		Serial.print("SD卡类型: ");
 		if (cardType == CARD_MMC) {
 			Serial.println("MMC");
 		} else if (cardType == CARD_SD) {
@@ -215,10 +291,10 @@ void init_SDcard() {
 		}
 
 		Serial.printf("Total space: %lluMiB\r\n",  SD.totalBytes() / (1024 * 1024));
-		Serial.printf("Used space: %lluMiB\r\n",   SD.usedBytes()  / (1024 * 1024));
+		Serial.printf( "Used space: %lluMiB\r\n",  SD.usedBytes()  / (1024 * 1024));
 		
 		// String list_res = "";
-		// listDir(SD, "/", 3, list_res);
+		// listDir(SD, SD_PREFIX, 3, list_res);
 		// Serial.println(list_res);
 
 		spi_mux_unlock();   // 解锁
@@ -291,7 +367,7 @@ void generate_wav_header(char* wav_header, uint32_t wav_size, uint32_t sample_ra
 }
 
 // 录音 PCM 音频 (需手动 释放pcm_data)
-void record_pcm(const char *key) {
+void record_pcm(const char *record_key) {
 	bytes_read = 0;
 	recordingSize = 0;
 	
@@ -310,14 +386,195 @@ void record_pcm(const char *key) {
 		if (err != ESP_OK) continue;
 		recordingSize += bytes_read / 2;
 
-		if (millis() - start_time > 240) { // 每 240ms 检查一次是否松开录音按钮（按键发送间隔是 240ms）
-			start_time = millis();
-			if (!check_key(1, key)) break;
+		if (millis() - start_time > Check_Interval) { // 每 Check_Interval 检查一次是否松开录音按钮
+			start_time = millis();					  //  (按键发送间隔是 240ms)
+			if (!check_key(1, record_key)) break;
 		}
 	}
 }
 
+// 录制 WAV 文件
+void record_wav(const char *record_key) {
+	Serial.print("[WAV] 录音中 ... ");
+	main_label_set_text("[WAV] 录音中 ... ");
+	
+	record_pcm(record_key);
+	Serial.print("OK\r\n");
+	main_label_add_text("OK\r\n");
+
+	// ============== 生成 WAV 头并写入 SD 卡 ==============
+	
+	uint64_t pcm_byte_size = recordingSize * sizeof(uint16_t); // 计算实际录制的字节长度
+
+	// 只有确实录到了数据才写文件
+	if (pcm_byte_size > 0) {
+		File wav_file;
+		int wav_index;
+		if (spi_mux_lock()) {
+			// 读取 SD卡上 WAV文件数量
+			wav_index = readFileNum(SD, SD_PREFIX "records");
+			// 如果目录不存在 则创建
+			if (wav_index == -1) {
+				createDir(SD, SD_PREFIX "records");
+				wav_index = 0;
+			}
+			getWavFileIdex(SD, SD_PREFIX "records/", wav_index);
+			if (wav_index == -1) { // 获取失败时，使用文件数量作名称
+				wav_index = readFileNum(SD, SD_PREFIX "records");
+			}
+			// 1. 打开 SD 卡文件 (FILE_WRITE 会创建新文件，如果存在会覆盖)
+			wav_file = SD.open(SD_PREFIX "records/" + String(wav_index) + ".wav", FILE_WRITE);
+			spi_mux_unlock();
+		}
+		if (wav_file) {
+			Serial.print("[WAV] 写入 WAV头 中 ... ");
+			main_label_add_text("[WAV] 写入 WAV头 中 ... ");
+			
+			// 2. 准备 44 字节的 WAV 文件头 (WAVE_HEADER_SIZE 通常定义为 44)
+			char wav_header[WAVE_HEADER_SIZE];
+			generate_wav_header(wav_header, pcm_byte_size, SAMPLE_RATE);
+
+			// 3. 写入 WAV 文件头
+			if (spi_mux_lock()) {
+				wav_file.write((uint8_t*)wav_header, WAVE_HEADER_SIZE);
+				spi_mux_unlock();
+			}
+			
+			// 4. 写入 PCM 纯音频数据
+			// 【注意】必须将 uint16_t* 强制转换为 uint8_t*，长度传入字节数 pcm_byte_size
+			Serial.print("OK\r\n[WAV] 写入 PCM数据 中 ... ");
+			main_label_add_text("OK\r\n[WAV] 写入 PCM数据 中 ... ");
+			if (spi_mux_lock()) {
+				size_t bytes_written = wav_file.write((uint8_t*)pcm_data, pcm_byte_size);
+				wav_file.close();
+				spi_mux_unlock();
+
+				if (bytes_written == pcm_byte_size) {
+					Serial.print("OK\r\n[WAV] 写入成功\r\n");
+					main_label_add_text("OK\r\n[WAV] 写入成功\r\n");
+				} else {
+					Serial.print("写入数据不完整\r\n");
+					main_label_add_text("写入数据不完整\r\n");
+				}
+				String tmp_text = "[WAV] 文件: " + String(wav_index) + ".wav, 总大小: " + (pcm_byte_size + WAVE_HEADER_SIZE) + " B\r\n";
+				Serial.print(tmp_text);
+				main_label_add_text(tmp_text.c_str());
+			}
+		} else {
+			Serial.print("[WAV] 无法打开SD卡文件\r\n");
+			main_label_add_text("[WAV] 无法打开SD卡文件\r\n");
+		}
+	} else {
+		Serial.print("[WAV] 未录制到有效音频数据\r\n");
+		main_label_add_text("[WAV] 未录制到有效音频数据\r\n");
+	}
+	// 释放内存
+	free(pcm_data);
+}
+
+
+
 // ############################### 请求 ##################################
+
+// 注册 WebSocket 回调
+void register_ws_callback() {
+	client.onMessage([&](websockets::WebsocketsMessage message) {
+		// Serial.print("[Received] ");
+		// Serial.println(message.data());
+		
+		JsonDocument tmp_doc;   // 临时 JSON 对象
+		
+		DeserializationError error = deserializeJson(tmp_doc, message.data());
+		if (error) {
+			Serial.print("JSON 解析错误: ");
+			Serial.println(error.f_str());
+			main_label_add_text( ( "#c81414 JSON 解析错误: #\n" + String(error.c_str()) ).c_str() );
+			return;
+		}
+		
+		const char* eventType = tmp_doc["type"];
+		
+		// 处理不同的事件类型
+		if (strcmp(eventType, "session.created") == 0) {
+			Serial.println("[ASR | 事件] session.created");
+		}
+		else if (strcmp(eventType, "session.updated") == 0) {
+			Serial.println("[ASR | 事件] session.updated");
+		}
+		else if (strcmp(eventType, "input_audio_buffer.speech_started") == 0) {
+			Serial.println("[ASR | 事件] Speech started detected (VAD)");
+			// main_label_add_text("[ASR | 事件] Speech started detected (VAD)\n");
+		}
+		else if (strcmp(eventType, "input_audio_buffer.speech_stopped") == 0) {
+			Serial.println("[ASR | 事件] Speech stopped detected (VAD)");
+			// main_label_add_text("[ASR | 事件] Speech stopped detected (VAD)\n");
+		}
+		else if (strcmp(eventType, "conversation.item.input_audio_transcription.text") == 0) {
+			// 实时识别结果
+			String fullText = tmp_doc["text"].as<String>() + tmp_doc["stash"].as<String>();
+			Serial.print("[ASR | 实时识别] ");
+			Serial.println(fullText);
+			// main_label_set_text("[ASR | 实时识别] " + fullText + "\n");
+		}
+		else if (strcmp(eventType, "conversation.item.input_audio_transcription.completed") == 0) {
+			// 最终识别结果
+			asr_text = tmp_doc["transcript"].as<String>();
+			asr_idle = 1;
+			Serial.print("[ASR] 最终识别结果：");
+			Serial.println(asr_text);
+			// main_label_add_text("[ASR] 最终识别结果：" + asr_text + "\n");
+
+			if (asr_text.length() > 0) {
+				if (lvgl_mux_lock()) { // 上锁
+					lv_textarea_add_text(ta, asr_text.c_str());
+					lvgl_mutex_unlock(); // 解锁
+				}
+			}
+		}
+		else if (strcmp(eventType, "session.finished") == 0) {
+			// 会话结束
+			Serial.println("[ASR | 事件] session.finished\n");
+		}
+		else if (strcmp(eventType, "error") == 0) {
+			// 错误处理
+			Serial.print("[ASR | 错误] ");
+			if (tmp_doc["error"]["message"]) {
+				Serial.println(tmp_doc["error"]["message"].as<String>());
+				main_label_add_text(("[ASR | 错误] " + tmp_doc["error"]["message"].as<String>()).c_str());
+			}
+		}
+	});
+}
+
+// 录音 并 发送到ASR识别
+void run_asr(const char *record_key) {
+	if (!asr_idle) return;
+
+	// 保存当前文本, 用于后续恢复
+	main_label_tmp_save();
+
+	// 重置状态
+	asr_text = "";
+	asr_idle = 0;
+	eventIdCounter = 0;
+
+	Serial.print("[ASR] 录音中 ... ");
+	main_label_set_text("[ASR] 录音中 ... ");
+	
+	record_pcm(record_key);
+	Serial.println("OK");
+	
+	main_label_set_text("ASR 识别中");
+	// 发送音频到Qwen-ASR进行识别
+	asr_send(pcm_data, recordingSize);
+	
+	// 释放内存
+	free(pcm_data);
+
+	vTaskDelay(700 / portTICK_PERIOD_MS);
+	// 恢复 main_label 上的文本
+	main_label_tmp_recover();
+}
 
 // 向 Qwen-ASR 发送音频数据
 void asr_send(uint16_t* pcm_data, uint32_t size) {
@@ -734,6 +991,16 @@ void main_label_tmp_show(const char* text, uint16_t delay_ms = 700) {
 	}
 }
 
+// 滚动 主文本框 (Y默认0) (默认加锁)
+void scroll_main_p(int16_t y = 0, bool lock = 1) {
+	if (lock) {
+		if (lvgl_mux_lock()) { // 上锁
+			lv_obj_scroll_to_y(main_panel, 0, LV_ANIM_ON);
+			lvgl_mutex_unlock(); // 解锁
+		}
+	} else lv_obj_scroll_to_y(main_panel, 0, LV_ANIM_ON);
+}
+
 // 匹配拼音 -> 词
 void word_match(const String &input_str, std::vector<String> &word_result, String &split_result) {
 	split_result = "";
@@ -819,17 +1086,66 @@ void update_word_match() {
 	word_match(pinyin_str, word_result, split_result);
 	update_candidate();
 }
+
+// 处理其他输入的键
+void proc_other_input_key() {
+	// 拼音输入下的 字母输入
+	if (typing_pinyin && proc_key[0] >= 'a' && proc_key[0] <= 'z') {
+		pinyin_str += proc_key;
+		if (lvgl_mux_lock()) { // 上锁
+			lv_label_set_text(pinyin_input_l, pinyin_str.c_str());
+			lvgl_mutex_unlock(); // 解锁
+		}
+		update_word_match();
+	}
+	// 选择候选词:  拼音输入模式  &&  word_result不为空     &&       proc_key 在 1 ~ 9 中
+	else if (typing_pinyin && word_result.size() && proc_key[0] >= '1' && proc_key[0] <= '9') {
+		if (proc_key.toInt()+candidate_offset <= word_result.size()) { // proc_key加偏移 超过 word_result 长度, 忽略
+			if (lvgl_mux_lock()) { // 上锁
+				lv_textarea_add_text(ta, word_result[ proc_key.toInt() + candidate_offset - 1 ].c_str());
+				clear_pinyin();
+				lvgl_mutex_unlock(); // 解锁
+			}
+		}
+		
+	}
+	// 拼音输入下的 0 等同与 ETR(Enter)
+	else if (typing_pinyin && pinyin_str.length() && proc_key == "0") {
+		if (lvgl_mux_lock()) { // 上锁
+			lv_textarea_add_text(ta, lv_label_get_text(pinyin_input_l));
+			clear_pinyin();
+
+			lvgl_mutex_unlock(); // 解锁
+		}
+	}
+	// 拼音输入下的 [ -> offset-MOVE_WORDS (右移 MOVE_WORDS 项)
+	else if (typing_pinyin && pinyin_str.length() && proc_key == "[") {
+		if (candidate_offset <= MOVE_WORDS) candidate_offset = 0;
+		else candidate_offset -= MOVE_WORDS;
+		update_candidate();
+	}
+	// 拼音输入下的 ] -> offset+MOVE_WORDS (左移 MOVE_WORDS 项)
+	else if (typing_pinyin && pinyin_str.length() && proc_key == "]") {
+		if (candidate_offset+MOVE_WORDS*2 >= word_result.size()) {
+			candidate_offset = word_result.size() - MOVE_WORDS;
+		} else candidate_offset += MOVE_WORDS;
+		update_candidate();
+	}
+	// 拼音输入下的 其他字符 及 正常输入
+	else {
+		ta_add_text(proc_key.c_str());
+	}
+}
+
 // 读取 IMU 数据, 并 更新滚动位置
 void my_read_imu() {
     IMU.update();
-
     IMU.getAccel(&accelData); // accelData.accelX accelData.accelY accelData.accelZ
     // IMU.getGyro(&gyroData); // gyroData.gyroX gyroData.gyroY) gyroData.gyroZ
-
-    // Serial.println(IMU.getTemp());
+    // IMU.getTemp();
 
     if (lvgl_mux_lock()) { // 上锁
-		lv_obj_scroll_by_bounded(main_panel, 0, 0-accelData.accelY*10, LV_ANIM_ON);
+		lv_obj_scroll_by_bounded(main_panel, 0, 0-accelData.accelY*SCROLL_MULTI, LV_ANIM_ON);
 		lvgl_mutex_unlock();
 	}
 

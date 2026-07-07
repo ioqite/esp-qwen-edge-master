@@ -47,12 +47,14 @@
 // 按键引脚定义
 #define BTN_PIN_1 11
 #define BTN_PIN_2 13
+#define WAKEUP_BTN BTN_PIN_1
 
 // SD卡 引脚定义
 #define SD_SCK 39
 #define SD_MISO 40
 #define SD_MOSI 38
 #define SD_CS 41
+#define SD_PREFIX "/esp-edge/" // 所有操作的 SD卡路径前缀
 
 // I2S 引脚定义 及 设置参数
 #define I2S_WS 9    // WS 引脚
@@ -89,11 +91,15 @@
 #define IMU_PIN_SDA 48    // IMU SDA 引脚
 #define IMU_PIN_SCL 47    // IMU SCL 引脚
 #define IMU_ADDRESS 0x6B  // IMU 地址, 默认 0x6B
+#define SCROLL_MULTI 10   // IMU加速度(Y轴) 与 main_label被滚动像素 的倍率
 
 // 默认 UART模式 引脚
 #define DEFAULT_BAUD    115200
 #define DEFAULT_RX_PIN  6
 #define DEFAULT_TX_PIN  16
+
+// 按键检查间隔 (ms)
+#define Check_Interval 500
 
 // 模型名称
 #define MAIN_MODEL_NAME "qwen-plus"   // 主模型
@@ -190,6 +196,9 @@ void main_label_tmp_save();
 void main_label_tmp_recover();
 // 在 main_label 上临时显示文本
 void main_label_tmp_show(const char* text, uint16_t delay_ms);
+
+// 滚动 主文本框 (Y默认0) (默认加锁)
+void scroll_main_p(int16_t y, bool lock);
 
 // // 鼠标回调
 // void my_input_read(lv_indev_drv_t * drv, lv_indev_data_t*data);
