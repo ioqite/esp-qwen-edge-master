@@ -158,9 +158,6 @@ void my_loop(void *param) {
 		// }
 
 		core0_loop_func();
-		
-		// // 清空串口
-		// while (Serial1.available()) Serial1.read();
 	}
 	main_label_set_text("循环已终止");
 	vTaskDelete(NULL); // 防止循环终止
@@ -380,8 +377,9 @@ void getAnswer(String& _user_prompt) {
 				main_label_add_text(&c_tmp);
 				// Serial.println("UART2 接收: " + String(c_tmp));
 			}
-			if (Serial1.available()) {
-				str_tmp = read_key();
+			bleLink.loop();
+			if (proc_key.length()) {
+				str_tmp = proc_key;
 				if (str_tmp == "$12") break;
 				Serial2.write(str_tmp.c_str());
 				// Serial.println("UART2 发送: " + str_tmp);
@@ -528,13 +526,25 @@ void hardware_init() {
 		lv_disp_drv_register(&disp_drv);
 	}
 
+	// 初始化 BLE 连接
+    bleLink.begin(BLE_PEER_MAC, BLE_ROLE, "ESP32S3-Link");
+
+    // 注册回调 (顺序无关, 可在 begin 之后任意时刻注册)
+    bleLink.onConnect(BLEonConnect);
+    bleLink.onDisconnect(BLEonDisconnect);
+    bleLink.onReceive(BLEonReceive);
+
+	Serial.println("======= BLE 信息 =======");
+	Serial.printf("Local MAC : %s\n", bleLink.localAddress().c_str());
+    Serial.printf("Peer  MAC : %s\n", bleLink.peerAddress().c_str());
+    Serial.printf("Role      : %s\n", bleLink.role() == BLETextLink::MASTER ? "MASTER" : "SLAVE");
+
 	// 初始化 IMU
 	Wire.begin(48, 47);
   	Wire.setClock(400000); // 400 kHz clock
 	int err = IMU.init({0}, IMU_ADDRESS);
 	if (err != 0) {
 		Serial.println("Error initializing IMU: " + err);
-		// while (true) vTaskDelay(10000);
 	}
 	
 	// // 初始化 鼠标设备(IMU + GPIO 0 模拟的) 与 鼠标指针 
@@ -547,7 +557,7 @@ void hardware_init() {
 	// lv_img_set_src(cursor_img, LV_SYMBOL_OK);
 	// lv_indev_set_cursor(mouse_indev, cursor_img);
 
-	#if (LCD_BL >= 0)
+#if (LCD_BL >= 0)
 	ledcAttach(LCD_BL , LEDC_FREQ, LEDC_TIMER_10_BIT);
 	// ledcAttach(LEDC_CHANNEL , LEDC_FREQ, LEDC_TIMER_10_BIT);
 	// ledcAttachPin(, LEDC_CHANNEL);
@@ -562,7 +572,6 @@ void hardware_init() {
 void setup() {
 	Serial.begin(115200);
 	// print_heap_free();
-	Serial1.begin(115200, SERIAL_8N1, 10, 7); // 初始化 C3从机串口
 	
 	hardware_init();  // 硬件 初始化
 	
@@ -634,9 +643,6 @@ void setup() {
 	lv_obj_align_to(candidate_l, pinyin_input_l, LV_ALIGN_OUT_BOTTOM_MID, 0, -2);
 	lv_obj_add_style(candidate_l, &style_pinyin, LV_STATE_DEFAULT);
 	lv_label_set_text(candidate_l, "");
-
-	// 启动 C3 从机
-	// Serial1.write("`");
 	
 	xTaskCreatePinnedToCore(
 		my_loop,     // 任务函数

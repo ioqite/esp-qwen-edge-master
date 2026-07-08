@@ -37,6 +37,7 @@
 #include "time.h"
 #include "ArduinoCalc.hpp"
 #include <zh_pinyin_decoder.hpp>
+#include "BLETextLink.hpp"
 
 // ###################### API #########################
 #define API_ENDPOINT "https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation"

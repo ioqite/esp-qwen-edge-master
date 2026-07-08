@@ -1,8 +1,11 @@
 #include "app_common.hpp"
 
 
-// ############################### 变量声明 ##############################
+// ######################################===================##################################
+// ##################################### | 变量声明 与 初始化 | #################################
+// ######################################===================##################################
 
+// ################## 线程锁 与 FreeRTOS Task ###################
 // LVGL 线程锁
 SemaphoreHandle_t lvgl_mutex = xSemaphoreCreateRecursiveMutex();
 // SPI 线程锁
@@ -16,9 +19,12 @@ void spi_mux_unlock() { xSemaphoreGiveRecursive(spi_mux); }
 TaskHandle_t TASK_Handle_WiFi = NULL;
 TaskHandle_t TASK_Handle_My_Loop = NULL;
 
+// ########################### 外设 ###########################
+
 // SD卡状态 (正常为空, 否则为 错误信息)
 String sd_status = "";
 
+// 屏幕背光 占空比(%)
 double bl_duty = LEDC_DEFAULT_DUTY;	// 默认占空比
 
 // IMU 和 鼠标指针
@@ -28,7 +34,8 @@ GyroData gyroData;
 // float touchpad_x = 160;
 // float touchpad_y = 120;
 
-// 屏幕刷新 与 LVGL 缓冲区
+// ###################### 屏幕刷新 与 LVGL ######################
+
 uint32_t screenWidth;
 uint32_t screenHeight;
 uint32_t bufSize;
@@ -42,30 +49,26 @@ lv_obj_t * main_label;
 lv_obj_t * ta;
 lv_obj_t * kb;
 
-// GMT 时间偏移量 (秒)
-#define GMT_OFFSET_SEC 8 * 3600
-// SNTP 服务器
-#define SNTP_SERVER "ntp.cnnic.cn" // CNNIC
+// ##################### 录音 与 Qwen-ASR #####################
 
-// 文本快捷键
-#define TEXT_SHORTCUT_SIZE 9
-const char* TEXT_SHORTCUT[TEXT_SHORTCUT_SIZE] = {"用", "控制", "是", "什么", "如何", "有", "中", "的", "详细说一下"};
+uint16_t *pcm_data;         // 录音缓存区
+size_t bytes_read = 0;
+uint32_t recordingSize = 0;
 
-// Qwen-ASR 相关变量
-uint16_t *pcm_data;                // 录音缓存区
 websockets::WebsocketsClient client;
 String asr_text = "";   // 最终识别结果文本
 bool asr_idle = 1;      // 是否空闲
 int eventIdCounter = 0; // 事件ID计数器
-size_t bytes_read = 0;
-uint32_t recordingSize = 0;
 
-// 状态变量
-bool transferring_key = 0;     // 开始接收新的键 (有的键是多字母的)
+// ######################## 状态变量 ##########################
+
+// bool transferring_key = 0;     // 开始接收新的键 (有的键是多字母的)
 bool skip_wifi = 0;            // 是否跳过WiFi连接
 bool connecting_wifi = false;  // 是否正在连接WiFi
 bool syncing_sntp = false;     // 是否正在同步SNTP时间
 String proc_key;   // 处理中的按键
+
+// ######################## 拼音输入法 ########################
 
 #define MOVE_WORDS 6  // 一次移动词数
 lv_style_t style_pinyin;
@@ -78,7 +81,8 @@ String split_result = "";  // 拼音分割结果
 uint16_t candidate_offset = 0; // 候选词显示框 的 偏移词数
 bool typing_pinyin = false; // 是否正在输入拼音标志
 
-// ###################### 对话管理 #########################
+// ######################### 对话管理 #########################
+
 // 最大对话窗口 个数
 #define MAX_CHAT_WINDOW 5
 // 最大 保存的对话轮数
@@ -98,7 +102,8 @@ struct chat_window_t{
 uint8_t chat_window_select = 0;
 #define current_window chat_windows[chat_window_select]
 
-// ###################### 请求管理 #########################
+// ####################### 请求管理 ##########################
+
 // 请求所需变量
 String response;
 String answer;
@@ -112,15 +117,35 @@ bool show_proced = 0;      // 是否显示 预处理过的 提示词, 由 &3 键
 bool calc_mode   = 0;      // 是否启用 计算器模式,       由 &4 键切换
 // bool enable_search = 0; // 是否启用 联网搜索,         未实现
 
-// ###################### 其他 #########################
+// ######################## 其他 ###########################
+
+// 蓝牙(BLE) 传输器
+BLETextLink bleLink;
+
 // 储存 时间信息
 tm timeinfo;
 
+// SD卡使用的 SPI总线 (需与 屏幕总线 一致)
 SPIClass sd_spi_bus(FSPI);
 // 屏幕, More: https://github.com/moononournation/Arduino_GFX/wiki/
 Arduino_DataBus *bus = new Arduino_ESP32SPI(LCD_DC, LCD_CS, LCD_SCLK, LCD_MOSI, LCD_MISO, FSPI /* spi_num */, true);
 Arduino_GFX *gfx = new Arduino_ST7789(bus, LCD_RST, EXAMPLE_LCD_ROTATION, true /* IPS */, EXAMPLE_LCD_H_RES, EXAMPLE_LCD_V_RES);
 
+
+// GMT 时间偏移量 (秒)
+#define GMT_OFFSET_SEC 8 * 3600
+// SNTP 服务器
+#define SNTP_SERVER "ntp.cnnic.cn" // CNNIC
+
+// 文本快捷键
+#define TEXT_SHORTCUT_SIZE 9
+const char* TEXT_SHORTCUT[TEXT_SHORTCUT_SIZE] = {"用", "控制", "是", "什么", "如何", "有", "中", "的", "详细说一下"};
+
+
+
+// ######################################===========#######################################
+// ##################################### | 函数声明 | ######################################
+// ######################################===========#######################################
 
 
 // ############################### 外设 ##################################
@@ -141,18 +166,11 @@ bool check_key(bool use_filter = 0, const char *filter_key = NULL) {
 
 // 读取按键输入
 String read_key() {
-	transferring_key = 0;
 	proc_key = "";
 	while (1) {
-		if (Serial1.available()) {
-			char t = Serial1.read();
-			if (t == '`') {
-				transferring_key = !transferring_key;
-				if (!transferring_key) {
-					return proc_key;
-				}
-			} else if (transferring_key) proc_key += t;
-		} else vTaskDelay(2 / portTICK_PERIOD_MS);
+		bleLink.loop(); // 读取按键输入
+		if (proc_key != "") return proc_key;
+		else vTaskDelay(2 / portTICK_PERIOD_MS);
 		core0_loop_func();
 	}
 }
@@ -470,6 +488,34 @@ void record_wav(const char *record_key) {
 	}
 	// 释放内存
 	free(pcm_data);
+}
+
+
+// ####################### BLE 回调 #######################
+
+// BLE设备连接 回调
+void BLEonConnect() {
+    Serial.println("[BLE事件] 已连接 键盘 或 其他设备");
+    // 这里可以做"上线后初始化"操作, 如发送握手消息
+    // bleLink.send("Connected from " + bleLink.localAddress());
+}
+
+// BLE设备断开 回调
+void BLEonDisconnect() {
+    Serial.println("[BLE事件] 连接已断开 对方会自动重连...");
+}
+
+void BLEonReceive(const String& msg) {
+    Serial.printf("[BLE事件 | 接收] %u bytes: %s\n", msg.length(), msg.c_str());
+    // 示例: 收到 "ping" 回 "pong"
+    // if (msg == "ping") bleLink.send("pong");
+
+	proc_key = "";
+	if (msg == "") return;
+	if (msg[0] != 0x02) return;
+	if (msg[msg.length() - 1] != 0x03) return;
+
+	proc_key = msg.substring(1, msg.length() - 1);
 }
 
 
