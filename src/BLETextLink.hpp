@@ -34,6 +34,8 @@
 
 #pragma once
 
+#define LogSerial Serial
+
 #include <Arduino.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
@@ -89,7 +91,7 @@ public:
                                     this, 1, &_taskHandle, 0);
         }
 
-        Serial.printf("[BLELink] role=%s peer=%s local=%s\n",
+        LogSerial.printf("[BLELink] role=%s peer=%s local=%s\n",
             _effectiveRole == MASTER ? "MASTER" : "SLAVE",
             _peerAddr.c_str(), localAddress().c_str());
     }
@@ -291,18 +293,18 @@ private:
         _client->setClientCallbacks(_clientCb);
 
         if (!_client->connect(BLEAddress(_peerAddr.c_str()))) {
-            Serial.printf("[BLELink] connect %s failed\n", _peerAddr.c_str());
+            LogSerial.printf("[BLELink] connect %s failed\n", _peerAddr.c_str());
             _stopClient();
             return;
         }
         _client->setMTU(_mtu);
 
         BLERemoteService* svc = _client->getService(BLEUUID(SERVICE_UUID));
-        if (!svc) { Serial.println("[BLELink] service not found"); _stopClient(); return; }
+        if (!svc) { LogSerial.println("[BLELink] service not found"); _stopClient(); return; }
 
         _remoteRx = svc->getCharacteristic(BLEUUID(CHAR_RX_UUID));
         _remoteTx = svc->getCharacteristic(BLEUUID(CHAR_TX_UUID));
-        if (!_remoteRx) { Serial.println("[BLELink] RX char not found"); _stopClient(); return; }
+        if (!_remoteRx) { LogSerial.println("[BLELink] RX char not found"); _stopClient(); return; }
 
         if (_remoteTx && _remoteTx->canNotify()) {
             _remoteTx->subscribe(true, [this](BLERemoteCharacteristic* c, uint8_t* data, size_t length, bool isNotify) {
@@ -312,7 +314,7 @@ private:
 
         _connected = true;
         _evtConnected = true;
-        Serial.printf("[BLELink] connected to %s (MTU=%u)\n",
+        LogSerial.printf("[BLELink] connected to %s (MTU=%u)\n",
                       _peerAddr.c_str(), _client->getMTU());
     }
 

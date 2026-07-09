@@ -498,13 +498,15 @@ void record_wav(const char *record_key) {
 // BLE设备连接 回调
 void BLEonConnect() {
     Serial.println("[BLE事件] 已连接 键盘 或 其他设备");
+	ta_tmp_show("BLE 已连接", 1000);
     // 这里可以做"上线后初始化"操作, 如发送握手消息
     // bleLink.send("Connected from " + bleLink.localAddress());
 }
 
 // BLE设备断开 回调
 void BLEonDisconnect() {
-    Serial.println("[BLE事件] 连接已断开 对方会自动重连...");
+    Serial.println("[BLE事件] 连接已断开 对方会自动重连");
+	ta_tmp_show("BLE连接 已断开", 1000);
 }
 
 void BLEonReceive(const String& msg) {
@@ -596,6 +598,7 @@ void register_ws_callback() {
 // 录音 并 发送到ASR识别
 void run_asr(const char *record_key) {
 	if (!asr_idle) return;
+	print_heap_free();
 
 	// 保存当前文本, 用于后续恢复
 	main_label_tmp_save();
@@ -1374,11 +1377,11 @@ void connect_wifi() {
 void print_heap_free() {
 	// 查看 片内 RAM 和 PSRAM 剩余堆
 	Serial.println();
-	Serial.println("============================");
-	Serial.printf ("== 堆 空闲: %.2f KB ======\r\n", esp_get_free_heap_size() / 1024.0);
-	Serial.printf ("== 内部RAM 空闲: %.2f KB ===\r\n", heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024.0);
-	Serial.printf ("== PSRAM 空闲: %.2f KB ===\r\n", heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024.0);
-	Serial.println("============================");
+	Serial.println("===============================");
+	Serial.printf ("== 内部RAM 最大分配: %.2f KiB ==\r\n", heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024.0);
+	Serial.printf ("== 内部RAM 空闲: %.2f KiB ===\r\n",  heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024.0);
+	Serial.printf ("== PSRAM 空闲: %.2f KiB =====\r\n",   heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024.0);
+	Serial.println("===============================");
 }
 
 // 在 Core0(my_loop) 空闲(等待)时 执行的代码

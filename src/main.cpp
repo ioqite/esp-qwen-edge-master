@@ -41,7 +41,6 @@ void my_loop(void *param) {
 		} else if (proc_key == "$11") {
 			ta_set_text("");
 		/* 获取结果 */} else if (proc_key == "$12") {
-			// print_heap_free();
 			if (lvgl_mux_lock()) { // 上锁
 				user_prompt = lv_textarea_get_text(ta);
 				if (!user_prompt.startsWith("-scr")) scroll_main_p(0, 0);
@@ -165,6 +164,7 @@ void my_loop(void *param) {
 
 // 根据情况发送不同请求
 void getAnswer(String& _user_prompt) {
+	print_heap_free();
 	// 输入为空
 	if (_user_prompt == "") {
 		Serial.println("输入为空");
@@ -218,6 +218,7 @@ void getAnswer(String& _user_prompt) {
 			
 			answer += "\r\n堆 容量: " + String(ESP.getHeapSize() / 1024.0) + " KiB";
 			answer += "\r\n堆 空闲: " + String(ESP.getFreeHeap() / 1024.0) + " KiB";
+			answer += "\r\n堆 最大分配: " + String(ESP.getMaxAllocHeap() / 1024.0) + " KiB";
 			answer += "\r\nPSRAM 容量: " + String(ESP.getPsramSize() / 1024.0 / 1024.0, 3) + " MiB";
 			answer += "\r\nPSRAM 空闲: " + String(ESP.getFreePsram() / 1024.0 / 1024.0, 3) + " MiB";
 			
@@ -527,7 +528,7 @@ void hardware_init() {
 	}
 
 	// 初始化 BLE 连接
-    bleLink.begin(BLE_PEER_MAC, BLE_ROLE, "ESP32S3-Link");
+    bleLink.begin(BLE_PEER_MAC, BLE_ROLE, BLE_NAME);
 
     // 注册回调 (顺序无关, 可在 begin 之后任意时刻注册)
     bleLink.onConnect(BLEonConnect);
