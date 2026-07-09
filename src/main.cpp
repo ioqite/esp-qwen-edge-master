@@ -282,8 +282,10 @@ void getAnswer(String& _user_prompt) {
 	}
 	// 读取 SD卡
 	if (_user_prompt.startsWith("-sd")) {
-		answer = sd_status;
-		if (sd_status.length()) return; // 如有错误 则返回错误原因
+		if (sd_status != nullptr) {
+			answer = sd_status;
+			return; // 如有错误 则返回错误原因
+		}
 
 		// -sd=xxx -> 读取 SD_PREFIX目录下 xxx 文件
 		String read_file_name = "";
@@ -340,6 +342,7 @@ void getAnswer(String& _user_prompt) {
 		if (spi_mux_lock()) {   // 加锁
 			File file = SD.open(read_file_name, FILE_READ);
 			if (file.available()) {
+				answer = "";
 				while (file.available()) answer += (char)file.read();
 				file.close();
 			} else {
@@ -572,10 +575,22 @@ void hardware_init() {
 
 
 void setup() {
+	heap_caps_malloc_extmem_enable(64);
+
 	Serial.begin(115200);
-	// print_heap_free();
-	
+	print_heap_free();
+
 	hardware_init();  // 硬件 初始化
+	
+	// 预分配对话历史到PSRAM，降低SRAM碎片化
+	if (psramFound()) {
+		for (int i = 0; i < MAX_CHAT_WINDOW; i++) {
+			chat_windows[i].chatHistory.reserve(MAX_MESSAGES * 2 + 1);
+		}
+		response.reserve(2048);
+		answer.reserve(2048);
+		proced.reserve(2048);
+	}
 	
 	// 声明字体
 	LV_FONT_DECLARE(cgr_yuyag_w2_ext4);
@@ -649,7 +664,7 @@ void setup() {
 	xTaskCreatePinnedToCore(
 		my_loop,     // 任务函数
 		"my_loop",   // 任务名称
-		10000,        // 堆栈大小
+		8000,        // 堆栈大小
 		NULL,         // 参数
 		1,            // 优先级
 		&TASK_Handle_My_Loop,  // 任务句柄

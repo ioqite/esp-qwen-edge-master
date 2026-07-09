@@ -1,5 +1,6 @@
 #include "app_common.hpp"
 
+// _SECTION_ATTR_IMPL(".ext_ram.bss", __COUNTER__) int test_ext_ram = 0;
 
 // ######################################===================##################################
 // ##################################### | 变量声明 与 初始化 | #################################
@@ -22,10 +23,10 @@ TaskHandle_t TASK_Handle_My_Loop = NULL;
 // ########################### 外设 ###########################
 
 // SD卡状态 (正常为空, 否则为 错误信息)
-String sd_status = "";
+char *sd_status = nullptr;
 
 // 屏幕背光 占空比(%)
-double bl_duty = LEDC_DEFAULT_DUTY;	// 默认占空比
+float bl_duty = LEDC_DEFAULT_DUTY;	// 默认占空比
 
 // IMU 和 鼠标指针
 QMI8658 IMU;
@@ -48,6 +49,7 @@ lv_obj_t * main_panel;
 lv_obj_t * main_label;
 lv_obj_t * ta;
 lv_obj_t * kb;
+int a = sizeof(String);
 
 // ##################### 录音 与 Qwen-ASR #####################
 
@@ -85,9 +87,9 @@ bool typing_pinyin = false; // 是否正在输入拼音标志
 // ######################### 对话管理 #########################
 
 // 最大对话窗口 个数
-#define MAX_CHAT_WINDOW 5
+#define MAX_CHAT_WINDOW 3
 // 最大 保存的对话轮数
-#define MAX_MESSAGES 20
+#define MAX_MESSAGES 10
 
 String main_label_text_tmp;
 
@@ -117,6 +119,9 @@ bool use_proc = 0;         // 是否使用 拼音预处理,       由 &2 键切�
 bool show_proced = 0;      // 是否显示 预处理过的 提示词, 由 &3 键切换
 bool calc_mode   = 0;      // 是否启用 计算器模式,       由 &4 键切换
 // bool enable_search = 0; // 是否启用 联网搜索,         未实现
+
+String tmp_output;      // 临时文本输出
+JsonDocument tmp_doc;
 
 // ######################## 其他 ###########################
 
@@ -333,8 +338,8 @@ void setupI2S() {
 		.channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
 		.communication_format = i2s_comm_format_t(I2S_COMM_FORMAT_STAND_I2S),
 		.intr_alloc_flags = 0, // default interrupt priority
-		.dma_buf_count = 8,
-		.dma_buf_len = 1024,
+		.dma_buf_count = 4,
+		.dma_buf_len = 512,
 		.use_apll = false
 	};
 
@@ -510,7 +515,7 @@ void BLEonDisconnect() {
 }
 
 void BLEonReceive(const String& msg) {
-    Serial.printf("[BLE事件 | 接收] %u bytes: %s\n", msg.length(), msg.c_str());
+    Serial.printf("[BLE事件 | 接收] %u bytes: %s\r\n", msg.length(), msg.c_str());
     // 示例: 收到 "ping" 回 "pong"
     // if (msg == "ping") bleLink.send("pong");
 
@@ -531,7 +536,7 @@ void register_ws_callback() {
 		// Serial.print("[Received] ");
 		// Serial.println(message.data());
 		
-		JsonDocument tmp_doc;   // 临时 JSON 对象
+		tmp_doc.clear();
 		
 		DeserializationError error = deserializeJson(tmp_doc, message.data());
 		if (error) {
@@ -640,8 +645,8 @@ void asr_send(uint16_t* pcm_data, uint32_t size) {
 		asr_idle = 1;
 		return;
 	}
-	String tmp_output;      // 临时文本输出
-	JsonDocument tmp_doc;   // 临时 JSON 对象
+	
+	tmp_doc.clear();
 
 	Serial.print("[ASR] 连接服务器中 ... ");
 	main_label_set_text("[ASR] 连接服务器中 ... ");
@@ -655,8 +660,10 @@ void asr_send(uint16_t* pcm_data, uint32_t size) {
 	client.setCertificate(nullptr);
 	client.setPrivateKey(nullptr);
 
+	print_heap_free();
 	// 连接 WebSocket
 	bool connected = client.connect(QWEN_ASR_BASE_URL "?model=" QWEN_ASR_MODEL);
+	print_heap_free();
 	if (connected) {
 		Serial.println("OK");
 		main_label_add_text("OK\n");
@@ -675,23 +682,21 @@ void asr_send(uint16_t* pcm_data, uint32_t size) {
 	tmp_doc["event_id"] = eventIdCounter++;
 	tmp_doc["type"] = "session.update";
 	
-	JsonObject session = tmp_doc["session"].to<JsonObject>();
-	JsonArray modalities = session["modalities"].to<JsonArray>();
-	modalities.add("text");
-	session["input_audio_format"] = "pcm";
-	session["sample_rate"] = SAMPLE_RATE;
+	tmp_doc["session"]["modalities"].add("text");
+	tmp_doc["session"]["input_audio_format"] = "pcm";
+	tmp_doc["session"]["sample_rate"] = SAMPLE_RATE;
 	
-	JsonObject transcription = session["input_audio_transcription"].to<JsonObject>();
+	JsonObject transcription = tmp_doc["session"]["input_audio_transcription"].to<JsonObject>();
 	transcription["language"] = ASR_LANGUAGE;
 	
 #if ENABLE_SERVER_VAD
 		// VAD模式：服务端自动检测语音起止
-		session["turn_detection"]["type"] = "server_vad";
-		session["turn_detection"]["threshold"] = ASR_Threshold;
-		session["turn_detection"]["silence_duration_ms"] = ASR_Silence_Duration_MS;
+		tmp_doc["session"]["turn_detection"]["type"] = "server_vad";
+		tmp_doc["session"]["turn_detection"]["threshold"] = ASR_Threshold;
+		tmp_doc["session"]["turn_detection"]["silence_duration_ms"] = ASR_Silence_Duration_MS;
 #else
 		// Manual模式：客户端控制断句
-		session["turn_detection"] = nullptr;
+		tmp_doc["session"]["turn_detection"] = nullptr;
 #endif
 	
 	serializeJson(tmp_doc, tmp_output);
@@ -718,8 +723,8 @@ void asr_send(uint16_t* pcm_data, uint32_t size) {
 		tmp_doc["type"] = "input_audio_buffer.append";
 		
 		// Base64编码音频数据
-		String base64Audio = base64::encode((uint8_t*)pcm_data + offset, chunkSize);
-		tmp_doc["audio"] = base64Audio;
+		// String base64Audio = ;
+		tmp_doc["audio"] = base64::encode((uint8_t*)pcm_data + offset, chunkSize);
 		
 		serializeJson(tmp_doc, tmp_output);
 		
@@ -821,12 +826,11 @@ int8_t getAPIanswer(const char* _SYSTEM_PROMPT, const String& _userPrompt, const
     http.begin(client, API_ENDPOINT);
     // http.begin(API_ENDPOINT);
     http.addHeader("Content-Type", "application/json");
-    http.addHeader("Authorization", "Bearer " + String(apiKey));
+    http.addHeader("Authorization", "Bearer " apiKey);
 
-	// --- 使用 ArduinoJson 构建请求体 ---
-	JsonDocument doc;
-
-	doc["model"] = _MAIN_MODEL_NAME;
+	// --- 构建请求体 ---
+	tmp_doc.clear();
+	tmp_doc["model"] = _MAIN_MODEL_NAME;
 
 	if (useHistory) {
 		// 如果是第一次对话，先加入系统提示词
@@ -837,28 +841,30 @@ int8_t getAPIanswer(const char* _SYSTEM_PROMPT, const String& _userPrompt, const
 		// 加入用户当前的问题
 		addMessageToHistory("user", _userPrompt);
 
+		JsonDocument msgDoc;
 		// 将历史记录中的每一条消息解析并添加到JSON数组中
 		for (String tmp : current_window.chatHistory) {
-			JsonDocument msgDoc;
 			DeserializationError error = deserializeJson(msgDoc, tmp);
-			if (!error) doc["input"]["messages"].add(msgDoc.as<JsonObject>());
+			if (!error) tmp_doc["input"]["messages"].add(msgDoc.as<JsonObject>());
 		}
 	} else {
 		JsonDocument msgDoc;
 		msgDoc["role"] = "system";
 		msgDoc["content"] = _SYSTEM_PROMPT;
-		doc["input"]["messages"].add(msgDoc.as<JsonObject>());
+		tmp_doc["input"]["messages"].add(msgDoc.as<JsonObject>());
 		msgDoc["role"] = "user";
 		msgDoc["content"] = _userPrompt;
-		doc["input"]["messages"].add(msgDoc.as<JsonObject>());
+		tmp_doc["input"]["messages"].add(msgDoc.as<JsonObject>());
 	}
 
     // 将构建好的JSON文档序列化为字符串
     String jsonPayload;
-    serializeJson(doc, jsonPayload);
-    Serial.printf("开始发送POST请求, 请求体: %s\r\n", jsonPayload.c_str());
+    serializeJson(tmp_doc, jsonPayload);
+    Serial.println("开始发送POST请求, 请求体: ");
+	Serial.println(jsonPayload);
    
     // 发送POST请求
+	print_heap_free();
     int httpResponseCode = http.POST(jsonPayload);
     
 	response = http.getString();
@@ -867,15 +873,15 @@ int8_t getAPIanswer(const char* _SYSTEM_PROMPT, const String& _userPrompt, const
 	if (httpResponseCode > 0){
 		if (httpResponseCode == 200) {
 			// 解析 JSON 响应
-			JsonDocument responseDoc;
-            DeserializationError error = deserializeJson(responseDoc, response);
+			tmp_doc.clear();
+            DeserializationError error = deserializeJson(tmp_doc, response);
 
             if (!error) {
-                const char* aiContent = responseDoc["output"]["text"];
+                const char* aiContent = tmp_doc["output"]["text"];
 				// 将AI的回复也加入历史记录
-				if (useHistory) addMessageToHistory("assistant", String(aiContent));
+				if (useHistory) addMessageToHistory("assistant", aiContent);
 
-                _response = String(aiContent);
+                _response = aiContent;
                 return 0;
             } else {
                 _response = "#e34819 JSON解析失败, Response: \r\n" + response + " #";
@@ -1350,7 +1356,7 @@ void connect_wifi() {
 			xTaskCreate(
 				wait_wifi_connection,     // 任务函数
 				"wait_wifi_connection",   // 任务名称
-				4096,              // 堆栈大小
+				2500,              // 堆栈大小
 				NULL,              // 参数
 				1,                 // 优先级
 				&TASK_Handle_WiFi  // 任务句柄

@@ -59,7 +59,7 @@ public:
     static constexpr const char* CHAR_RX_UUID = "6E400002-B5A3-F393-E0A9-E50E24DCCA9E";
     static constexpr const char* CHAR_TX_UUID = "6E400003-B5A3-F393-E0A9-E50E24DCCA9E";
 
-    BLETextLink() = default;
+    BLETextLink() : _serverCb(this), _charRxCb(this), _clientCb(this) {}
     ~BLETextLink() { end(); }
 
     // ====================================================================
@@ -79,19 +79,15 @@ public:
         BLEDevice::setMTU(_mtu);
         _decideRole();
 
-        // 预分配回调对象 (重连时复用, 避免 new 造成的内存碎片)
-        _serverCb = new ServerCb(this);
-        _charRxCb = new CharRxCb(this);
-        _clientCb = new ClientCb(this);
-
         _startServer();
 
         if (_effectiveRole == MASTER) {
-            xTaskCreatePinnedToCore(_connTaskStub, "BLELink", 8192,
+            // 优化: 任务栈从 8192 缩减至 3072, 节省 5KB RAM
+            xTaskCreatePinnedToCore(_connTaskStub, "BLELink", 3072,
                                     this, 1, &_taskHandle, 0);
         }
 
-        LogSerial.printf("[BLELink] role=%s peer=%s local=%s\n",
+        LogSerial.printf("[BLELink] role=%s peer=%s local=%s\r\n",
             _effectiveRole == MASTER ? "MASTER" : "SLAVE",
             _peerAddr.c_str(), localAddress().c_str());
     }
@@ -114,7 +110,7 @@ public:
 
         if (_effectiveRole == MASTER) {
             if (!_client || !_client->isConnected() || !_remoteRx) return false;
-            _remoteRx->writeValue((uint8_t*)text.c_str(), n, true);
+            _remoteRx->writeValue(text, true);
             return true;
         } else {
             if (!_connected || !_charTx) return false;
@@ -127,7 +123,7 @@ public:
     // ---------------- 状态查询 ----------------
     bool   isConnected() const { return _connected; }
     String localAddress() const {
-        return String(BLEDevice::getAddress().toString().c_str());
+        return BLEDevice::getAddress().toString().c_str();
     }
     String peerAddress() const { return _peerAddr; }
     Role   role()        const { return _effectiveRole; }
@@ -140,14 +136,23 @@ public:
     void loop()
     {
         // 1. 派发接收消息
-        String rx;
         for (;;) {
+            uint8_t tail;
+            bool has;
+            
             portENTER_CRITICAL(&_rxMux);
-            bool has = (_rxHead != _rxTail);
-            if (has) { rx = _rxBuf[_rxTail]; _rxTail = (_rxTail + 1) % RX_BUF_LEN; }
+            tail = _rxTail;
+            has = (_rxHead != _rxTail);
+            if (has) {
+                _rxTail = (tail + 1) % RX_BUF_LEN;
+            }
             portEXIT_CRITICAL(&_rxMux);
+
             if (!has) break;
-            if (_onRx) _onRx(rx);
+            if (_onRx) {
+                // 在 loop 上下文中构造 String, 避免在 BLE 回调中造成堆碎片
+                _onRx(String((const char*)_rxBuf[tail].data, _rxBuf[tail].len));
+            }
         }
         // 2. 派发事件
         if (_evtConnected)    { _evtConnected = false;    if (_onCn) _onCn(); }
@@ -168,10 +173,17 @@ public:
 
 private:
     // ---------------- 接收环形缓冲 (BLE task 写, loop task 读) ----------------
-    static const int RX_BUF_LEN = 16;
-    String          _rxBuf[RX_BUF_LEN];
-    volatile size_t _rxHead = 0, _rxTail = 0;
-    portMUX_TYPE    _rxMux = portMUX_INITIALIZER_UNLOCKED;
+    // 优化: 使用固定大小结构体数组替代 String 数组, 避免高频 BLE 收发导致的堆碎片
+    static constexpr int RX_BUF_LEN = 8;
+    static constexpr size_t MAX_PAYLOAD = 512; // 预留 MTU 上限空间
+    struct RxPacket {
+        uint16_t len;
+        uint8_t data[MAX_PAYLOAD];
+    };
+    
+    RxPacket _rxBuf[RX_BUF_LEN];
+    volatile uint8_t _rxHead = 0, _rxTail = 0;
+    portMUX_TYPE     _rxMux = portMUX_INITIALIZER_UNLOCKED;
 
     // ---------------- 事件标志 (BLE task 置位, loop task 清除并回调) ----------------
     volatile bool _evtConnected    = false;
@@ -196,21 +208,17 @@ private:
     BLERemoteCharacteristic*  _remoteTx = nullptr;
 
     // ---------------- Peripheral 资源 ----------------
-    BLEServer*        _server = nullptr;
+    BLEServer*         _server = nullptr;
     BLECharacteristic* _charRx = nullptr;
     BLECharacteristic* _charTx = nullptr;
 
-    // ---------------- 嵌套回调类 (前向声明 + 友元) ----------------
+    // ---------------- 嵌套回调类声明 ----------------
     class ServerCb;
     class CharRxCb;
     class ClientCb;
-    class NotifyCb;  // No longer used, subscribe now uses lambdas
-    friend class ServerCb; friend class CharRxCb;
+    friend class ServerCb; 
+    friend class CharRxCb;
     friend class ClientCb;
-
-    ServerCb* _serverCb = nullptr;
-    CharRxCb* _charRxCb = nullptr;
-    ClientCb* _clientCb = nullptr;
 
     // ---------------- 用户回调 ----------------
     MsgCallback   _onRx = nullptr;
@@ -218,13 +226,21 @@ private:
     EventCallback _onDc = nullptr;
 
     // ============================================================
-    //  接收缓冲写入 (BLE 回调上下文调用)
-    void _pushRx(const String& s)
+    //  接收缓冲写入 (BLE 回调上下文调用, 零分配)
+    void _pushRx(const uint8_t* data, size_t len)
     {
+        if (len == 0 || len > MAX_PAYLOAD) return;
+
         portENTER_CRITICAL(&_rxMux);
-        _rxBuf[_rxHead] = s;
-        _rxHead = (_rxHead + 1) % RX_BUF_LEN;
-        if (_rxHead == _rxTail) _rxTail = (_rxTail + 1) % RX_BUF_LEN; // 满则丢最旧
+        uint8_t head = _rxHead;
+        _rxBuf[head].len = len;
+        memcpy(_rxBuf[head].data, data, len);
+
+        head = (head + 1) % RX_BUF_LEN;
+        if (head == _rxTail) { // 满则丢最旧
+            _rxTail = (_rxTail + 1) % RX_BUF_LEN;
+        }
+        _rxHead = head;
         portEXIT_CRITICAL(&_rxMux);
     }
 
@@ -237,11 +253,21 @@ private:
         String me = localAddress();
         _effectiveRole = _macLessThan(me, _peerAddr) ? MASTER : SLAVE;
     }
+    
+    // 优化: 消除原实现中 toUpperCase 和 replace 产生的临时 String 堆分配
     static bool _macLessThan(const String& a, const String& b)
     {
-        String A = a; A.toUpperCase(); A.replace(":", "");
-        String B = b; B.toUpperCase(); B.replace(":", "");
-        return A < B;
+        size_t min_len = a.length() < b.length() ? a.length() : b.length();
+        for (size_t i = 0; i < min_len; ++i) {
+            char ca = a[i];
+            char cb = b[i];
+            if (ca == ':') continue;
+            if (cb == ':') continue;
+            if (ca >= 'a' && ca <= 'f') ca -= 32;
+            if (cb >= 'a' && cb <= 'f') cb -= 32;
+            if (ca != cb) return ca < cb;
+        }
+        return a.length() < b.length();
     }
 
     // ============================================================
@@ -249,14 +275,14 @@ private:
     void _startServer()
     {
         _server = BLEDevice::createServer();
-        _server->setCallbacks(_serverCb);
+        _server->setCallbacks(&_serverCb);
 
         BLEService* svc = _server->createService(SERVICE_UUID);
 
         _charRx = svc->createCharacteristic(
             CHAR_RX_UUID,
             BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR);
-        _charRx->setCallbacks(_charRxCb);
+        _charRx->setCallbacks(&_charRxCb);
 
         _charTx = svc->createCharacteristic(
             CHAR_TX_UUID,
@@ -290,10 +316,10 @@ private:
     {
         _stopClient();
         _client = BLEDevice::createClient();
-        _client->setClientCallbacks(_clientCb);
+        _client->setClientCallbacks(&_clientCb);
 
         if (!_client->connect(BLEAddress(_peerAddr.c_str()))) {
-            LogSerial.printf("[BLELink] connect %s failed\n", _peerAddr.c_str());
+            LogSerial.printf("[BLELink] connect %s failed\r\n", _peerAddr.c_str());
             _stopClient();
             return;
         }
@@ -308,13 +334,13 @@ private:
 
         if (_remoteTx && _remoteTx->canNotify()) {
             _remoteTx->subscribe(true, [this](BLERemoteCharacteristic* c, uint8_t* data, size_t length, bool isNotify) {
-                if (length) _pushRx(String((const char*)data, length));
+                if (length) _pushRx(data, length);
             });
         }
 
         _connected = true;
         _evtConnected = true;
-        LogSerial.printf("[BLELink] connected to %s (MTU=%u)\n",
+        LogSerial.printf("[BLELink] connected to %s (MTU=%u)\r\n",
                       _peerAddr.c_str(), _client->getMTU());
     }
 
@@ -343,7 +369,7 @@ private:
     }
 
     // ============================================================
-    //  回调类实现 (嵌套)
+    //  回调类实现 (嵌套, 作为友元直接访问主类私有成员)
     // ============================================================
 
     // ---- Peripheral Server 端 ----
@@ -381,7 +407,7 @@ private:
         {
             uint8_t* data = c->getData();
             size_t len = c->getLength();
-            if (len > 0) _p->_pushRx(String((const char*)data, len));
+            if (len > 0) _p->_pushRx(data, len);
         }
     private:
         BLETextLink* _p;
@@ -404,21 +430,8 @@ private:
         BLETextLink* _p;
     };
 
-    // ---- NotifyCb retained for API compatibility but no longer used internally ----
-#if defined(CONFIG_BLUEDROID_ENABLED) && !defined(CONFIG_NIMBLE_ENABLED)
-    class NotifyCb : public BLERemoteCharacteristicCallbacks {
-#else
-    class NotifyCb {
-#endif
-    public:
-        NotifyCb(BLETextLink* p) : _p(p) {}
-#if defined(CONFIG_BLUEDROID_ENABLED) && !defined(CONFIG_NIMBLE_ENABLED)
-        void onNotify(BLERemoteCharacteristic*, uint8_t* d, size_t n, bool) override
-        {
-            if (n) _p->_pushRx(String((const char*)d, n));
-        }
-#endif
-    private:
-        BLETextLink* _p;
-    };
+    // ---------------- 预分配的回调实例 (避免使用 new 产生堆碎片) ----------------
+    ServerCb _serverCb;
+    CharRxCb _charRxCb;
+    ClientCb _clientCb;
 };
