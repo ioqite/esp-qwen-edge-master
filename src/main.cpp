@@ -316,7 +316,7 @@ void getAnswer(String& _user_prompt) {
 			if (_user_prompt.length() > 4) { 
 				levels = (_user_prompt.substring(_user_prompt.indexOf('#') + 1)).toInt();
 			}
-			Serial.println("归递列出 SD卡 "SD_PREFIX" 下 " + String(levels) + "层 目录与文件");
+			Serial.println("归递列出 SD卡 " SD_PREFIX " 下 " + String(levels) + "层 目录与文件");
 			
 			if (spi_mux_lock()) {   // 加锁
 				listDir(SD, SD_PREFIX, levels, answer);
@@ -535,9 +535,10 @@ void hardware_init() {
     bleLink.onReceive(BLEonReceive);
 
 	Serial.println("======= BLE 信息 =======");
-	Serial.printf("Local MAC : %s\n", bleLink.localAddress().c_str());
-    Serial.printf("Peer  MAC : %s\n", bleLink.peerAddress().c_str());
-    Serial.printf("Role      : %s\n", bleLink.role() == BLETextLink::MASTER ? "MASTER" : "SLAVE");
+	Serial.printf("Local BLE MAC: %s\n", bleLink.localAddress().c_str());
+    Serial.printf("Peer  BLE MAC: %s\n", bleLink.peerAddress().c_str());
+    Serial.printf("Role         : %s\n", bleLink.role() == BLETextLink::MASTER ? "MASTER" : "SLAVE");
+	Serial.println("=======================");
 
 	// 初始化 IMU
 	Wire.begin(48, 47);

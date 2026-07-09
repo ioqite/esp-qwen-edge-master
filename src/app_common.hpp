@@ -96,8 +96,8 @@
 
 // 默认 UART模式 引脚
 #define DEFAULT_BAUD    115200
-#define DEFAULT_RX_PIN  6
-#define DEFAULT_TX_PIN  16
+#define DEFAULT_RX_PIN  2
+#define DEFAULT_TX_PIN  4
 
 // 按键检查间隔 (ms)
 #define Check_Interval 500

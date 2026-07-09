@@ -67,6 +67,7 @@ bool skip_wifi = 0;            // 是否跳过WiFi连接
 bool connecting_wifi = false;  // 是否正在连接WiFi
 bool syncing_sntp = false;     // 是否正在同步SNTP时间
 String proc_key;   // 处理中的按键
+String tmp_key;    // 读取时的临时按键 (仅限 read_key()、check_key()、BLEonReceive() 访问)
 
 // ######################## 拼音输入法 ########################
 
@@ -158,18 +159,19 @@ void set_bl_duty() {
 
 // 检查是否有按键按下, 0=无, 1=有
 bool check_key(bool use_filter = 0, const char *filter_key = NULL) {
-	if (!Serial1.available()) return 0;
-	if (use_filter && read_key() != filter_key) return 0;
-	while (Serial1.available()) Serial1.read();
+	tmp_key = "__NO_MSG";
+	bleLink.loop(); // 读取按键输入
+	if (tmp_key == "__NO_MSG") return 0;
+	if (use_filter && tmp_key != filter_key) return 0;
 	return 1;
 }
 
 // 读取按键输入
 String read_key() {
-	proc_key = "";
+	tmp_key = "__NO_MSG";
 	while (1) {
 		bleLink.loop(); // 读取按键输入
-		if (proc_key != "") return proc_key;
+		if (tmp_key != "__NO_MSG") return tmp_key;
 		else vTaskDelay(2 / portTICK_PERIOD_MS);
 		core0_loop_func();
 	}
@@ -510,12 +512,11 @@ void BLEonReceive(const String& msg) {
     // 示例: 收到 "ping" 回 "pong"
     // if (msg == "ping") bleLink.send("pong");
 
-	proc_key = "";
 	if (msg == "") return;
 	if (msg[0] != 0x02) return;
 	if (msg[msg.length() - 1] != 0x03) return;
 
-	proc_key = msg.substring(1, msg.length() - 1);
+	tmp_key = msg.substring(1, msg.length() - 1);
 }
 
 
@@ -1059,9 +1060,8 @@ void word_match(const String &input_str, std::vector<String> &word_result, Strin
 	match_case_node_t sp;
 	uint16_t idx = 0;
 
-	clock_t start_time = clock();
+	Serial.println("[INFO] word_match(): input_str=" + input_str);
 	word_dict_search_result_t *blk = zh_match_word(input_str.c_str(), &sp);
-	clock_t end_time = clock();
 
 	uint8_t loc = 0;
 	for (int i = 0; i < strlen(input_str.c_str()); i++) {
@@ -1374,9 +1374,11 @@ void connect_wifi() {
 void print_heap_free() {
 	// 查看 片内 RAM 和 PSRAM 剩余堆
 	Serial.println();
-	Serial.printf("\r\nFree Heap:\r\n - Heap free: %.2f KB\r\n", esp_get_free_heap_size() / 1024.0);
-	Serial.printf(" - Internal RAM free: %.2f KB\r\n", heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024.0);
-	Serial.printf(" - SPI RAM free: %.2f KB\r\n\r\n", heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024.0);
+	Serial.println("============================");
+	Serial.printf ("== 堆 空闲: %.2f KB ======\r\n", esp_get_free_heap_size() / 1024.0);
+	Serial.printf ("== 内部RAM 空闲: %.2f KB ===\r\n", heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024.0);
+	Serial.printf ("== PSRAM 空闲: %.2f KB ===\r\n", heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024.0);
+	Serial.println("============================");
 }
 
 // 在 Core0(my_loop) 空闲(等待)时 执行的代码
