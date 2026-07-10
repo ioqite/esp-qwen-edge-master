@@ -30,7 +30,7 @@ void my_loop(void *param) {
 
 	// 主循环 (Core 0)
 	while (1) {
-		proc_key = read_key(); // 读取按键输入
+		proc_key = wait_until_read_key(); // 读取按键输入
 		Serial.println("Key: " + proc_key);
 		
 		// 顶部功能键
@@ -43,17 +43,23 @@ void my_loop(void *param) {
 		/* 获取结果 */} else if (proc_key == "$12") {
 			if (lvgl_mux_lock()) { // 上锁
 				user_prompt = lv_textarea_get_text(ta);
-				if (!user_prompt.startsWith("-scr")) scroll_main_p(0, 0);
+				if (!user_prompt.startsWith("-scr")) {
+					scroll_main_p(0, 0);
+				}
 
 				lvgl_mutex_unlock(); // 解锁
 			}
 
-			Serial.println("等待结果中 ...");
-			main_label_set_text("#7e00d2 等待结果中 ... #");
+			if (!user_prompt.startsWith("-scr")) {
+				Serial.println("等待结果中 ...");
+				main_label_set_text("#7e00d2 等待结果中 ... #");
+			}
 
 			getAnswer(user_prompt);
 			if (answer.length()) main_label_set_text(answer.c_str()); // answer为空则不更新
-			if (!user_prompt.startsWith("-scr")) scroll_main_p(0, 0);
+			if (!user_prompt.startsWith("-scr")) {
+				scroll_main_p(0, 0);
+			}
 		/* $S1-$S9 */} else if (proc_key.length() >= 3 && proc_key.startsWith("$S") && proc_key.substring(2).toInt() > 0 && proc_key.substring(2).toInt() <= MAX_CHAT_WINDOW) {
 			if (lvgl_mux_lock()) { // 上锁
 				// 保存当前窗口 所有状态
@@ -146,6 +152,10 @@ void my_loop(void *param) {
 				}
 				lvgl_mutex_unlock(); // 解锁
 			}
+		/* 拼音预处理 */}else if (proc_key == "&S1") {
+			ta_tmp_show((use_proc = !use_proc) ? "拼音预处理: 1" : "拼音预处理: 0");
+		/* 显示处理结果 */}else if (proc_key == "&$2") {
+			ta_tmp_show((show_proced = !show_proced) ? "显示处理结果: 1" : "显示处理结果: 0");
 		/* 其他 */ } else { // 处理其他输入的键
 			proc_other_input_key();
 		}
@@ -188,7 +198,11 @@ void getAnswer(String& _user_prompt) {
 			strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S\r\n", &timeinfo);
 			main_label_set_text(buffer);
 			vTaskDelay(100 / portTICK_PERIOD_MS);
-			if (check_key()) break;
+			if (read_key() != "") {
+				main_label_set_text("#db6319 已停止刷新 #\r\n");
+				main_label_add_text(answer.c_str());
+				break;
+			}
 		}
 		answer = ""; return;
 	}
@@ -200,11 +214,15 @@ void getAnswer(String& _user_prompt) {
 			IMU.getGyro(&gyroData);   // gyroData.gyroX   gyroData.gyroY   gyroData.gyroZ
 
 			answer = "IMU 温度: " + String(IMU.getTemp());
-			answer += "\r\n加速度计:\r\n - X: " + String(accelData.accelX) + "\r\n - Y: " + String(accelData.accelY) + "\r\n - Z: " + String(accelData.accelZ);
-			answer += "\r\n陀螺仪:\r\n - X: " + String(gyroData.gyroX) + "\r\n - Y: " + String(gyroData.gyroY) + "\r\n - Z: " + String(gyroData.gyroZ);
+			answer += "\r\n加速度计: \n - X: " + String(accelData.accelX) + "\r\n - Y: " + String(accelData.accelY) + "\r\n - Z: " + String(accelData.accelZ);
+			answer += "\r\n陀螺仪: \n - X: " + String(gyroData.gyroX) + "\r\n - Y: " + String(gyroData.gyroY) + "\r\n - Z: " + String(gyroData.gyroZ);
 			main_label_set_text(answer.c_str());
 			vTaskDelay(50 / portTICK_PERIOD_MS);
-			if (check_key()) break;
+			if (read_key() != "") {
+				main_label_set_text("#db6319 已停止刷新 #\r\n");
+				main_label_add_text(answer.c_str());
+				break;
+			}
 		}
 		answer = ""; return;
 	}
@@ -255,8 +273,12 @@ void getAnswer(String& _user_prompt) {
 			answer += "\r\nSDK 版本: " + String(ESP.getSdkVersion());
 
 			main_label_set_text(answer.c_str());
-			vTaskDelay(100 / portTICK_PERIOD_MS);
-			if (check_key()) break;
+			vTaskDelay(200 / portTICK_PERIOD_MS);
+			if (read_key() != "") {
+				main_label_set_text("#db6319 已停止刷新 #\r\n");
+				main_label_add_text(answer.c_str());
+				break;
+			}
 		}
 		answer = ""; return;
 	}
@@ -368,8 +390,8 @@ void getAnswer(String& _user_prompt) {
 		// uint8_t rx_pin = _user_prompt.substring(_user_prompt.indexOf("=") + 1);
 		// uint8_t tx_pin = _user_prompt.substring(_user_prompt.indexOf("=") + 1);
 		Serial2.begin(DEFAULT_BAUD, SERIAL_8N1, DEFAULT_RX_PIN, DEFAULT_TX_PIN); // 初始化 串口
-		char tmp[80];
-		snprintf(tmp, sizeof(tmp), "#10b166 UART 已连接: # \n #10b186 %d,8N1, RX=%d, TX=%d # \n #d6cc14 按 $12 退出 UART # \n", 
+		char tmp[120];
+		snprintf(tmp, sizeof(tmp), "#10b166 UART 已连接: # \r\n#10b186 %d,8N1, RX=%d, TX=%d # \r\n#d6cc14 按 $12 退出 UART # \r\n", 
 			DEFAULT_BAUD, DEFAULT_RX_PIN, DEFAULT_TX_PIN);
 		main_label_set_text(tmp);
 		vTaskDelay(80 / portTICK_PERIOD_MS);
@@ -381,10 +403,10 @@ void getAnswer(String& _user_prompt) {
 				main_label_add_text(&c_tmp);
 				// Serial.println("UART2 接收: " + String(c_tmp));
 			}
-			bleLink.loop();
-			if (proc_key.length()) {
-				str_tmp = proc_key;
-				if (str_tmp == "$12") break;
+			str_tmp = read_key();
+			if (str_tmp == "$12") {
+				break;
+			} else {
 				Serial2.write(str_tmp.c_str());
 				// Serial.println("UART2 发送: " + str_tmp);
 			}

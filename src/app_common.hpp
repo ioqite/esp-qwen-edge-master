@@ -102,6 +102,9 @@
 // 按键检查间隔 (ms)
 #define Check_Interval 500
 
+// 用于检测 是否有按键 的文本
+#define MSG_NONE "__NO_MSG"
+
 // 模型名称
 #define MAIN_MODEL_NAME "qwen-plus"   // 主模型
 #define PROC_MODEL_NAME "qwen-plus"   // 拼音预处理 模型
@@ -256,11 +259,11 @@ void setupI2S();
 
 // ################## 其他 ###################
 
-// 检查是否有按键按下, 0=无, 1=有
-bool check_key(bool use_filter, const char *key);
+// 检查是否有按键按下 并 读取, 无->"", 有->按下的按键
+String read_key();
 
 // 读取按键输入
-String read_key();
+String wait_until_read_key();
 
 // 初始化 SD卡
 void init_SDcard();

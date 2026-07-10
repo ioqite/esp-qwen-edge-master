@@ -70,7 +70,7 @@ bool skip_wifi = 0;            // 是否跳过WiFi连接
 bool connecting_wifi = false;  // 是否正在连接WiFi
 bool syncing_sntp = false;     // 是否正在同步SNTP时间
 String proc_key;   // 处理中的按键
-String tmp_key;    // 读取时的临时按键 (仅限 read_key()、check_key()、BLEonReceive() 访问)
+String tmp_key;    // 读取时的临时按键 (仅限 wait_until_read_key()、read_key()、BLEonReceive() 访问)
 
 // ######################## 拼音输入法 ########################
 
@@ -160,21 +160,20 @@ void set_bl_duty() {
 	ledcWrite(LCD_BL , bl_duty ? (1 << LEDC_TIMER_10_BIT) / 100 * bl_duty : 0.2);
 }
 
-// 检查是否有按键按下, 0=无, 1=有
-bool check_key(bool use_filter = 0, const char *filter_key = NULL) {
-	tmp_key = "__NO_MSG";
+// 检查是否有按键按下 并 读取, 无->"", 有->按下的按键
+String read_key() {
+	tmp_key = MSG_NONE;
 	bleLink.loop(); // 读取按键输入
-	if (tmp_key == "__NO_MSG") return 0;
-	if (use_filter && tmp_key != filter_key) return 0;
-	return 1;
+	if (tmp_key == MSG_NONE) return "";
+	return tmp_key;
 }
 
 // 读取按键输入
-String read_key() {
-	tmp_key = "__NO_MSG";
+String wait_until_read_key() {
+	tmp_key = MSG_NONE;
 	while (1) {
 		bleLink.loop(); // 读取按键输入
-		if (tmp_key != "__NO_MSG") return tmp_key;
+		if (tmp_key != MSG_NONE) return tmp_key;
 		else vTaskDelay(2 / portTICK_PERIOD_MS);
 		core0_loop_func();
 	}
@@ -184,7 +183,8 @@ String read_key() {
 void listDir(fs::FS &fs, const char *dirname, uint8_t levels, String& response) {
 	File root = fs.open(dirname);
 	if (!root) {
-		response += "Failed to open directory";
+		response += "Failed to open directory: ";
+		response += dirname;
 		return;
 	}
 	if (!root.isDirectory()) {
@@ -411,7 +411,7 @@ void record_pcm(const char *record_key) {
 
 		if (millis() - start_time > Check_Interval) { // 每 Check_Interval 检查一次是否松开录音按钮
 			start_time = millis();					  //  (按键发送间隔是 240ms)
-			if (!check_key(1, record_key)) break;
+			if (read_key() != record_key) break;
 		}
 	}
 }
@@ -1050,10 +1050,10 @@ void main_label_tmp_show(const char* text, uint16_t delay_ms = 700) {
 void scroll_main_p(int16_t y = 0, bool lock = 1) {
 	if (lock) {
 		if (lvgl_mux_lock()) { // 上锁
-			lv_obj_scroll_to_y(main_panel, 0, LV_ANIM_ON);
+			lv_obj_scroll_to_y(main_panel, y, LV_ANIM_ON);
 			lvgl_mutex_unlock(); // 解锁
 		}
-	} else lv_obj_scroll_to_y(main_panel, 0, LV_ANIM_ON);
+	} else lv_obj_scroll_to_y(main_panel, y, LV_ANIM_ON);
 }
 
 // 匹配拼音 -> 词
@@ -1350,7 +1350,7 @@ void connect_wifi() {
 
 	// 等待选择 SSID 并初始化 WiFi
 	while (1) {
-		proc_key = read_key();
+		proc_key = wait_until_read_key();
 		if (proc_key.toInt() > 0 && proc_key.toInt() <= ssid_num) {
 			connecting_wifi = true;
 			int wifi_choose = proc_key.toInt();
