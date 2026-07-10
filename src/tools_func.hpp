@@ -1,6 +1,7 @@
 #include "app_common.hpp"
 
-// _SECTION_ATTR_IMPL(".ext_ram.bss", __COUNTER__) int test_ext_ram = 0;
+
+#define IN_PSRAM _SECTION_ATTR_IMPL(".ext_ram.bss", __COUNTER__)
 
 // ######################################===================##################################
 // ##################################### | 变量声明 与 初始化 | #################################
@@ -23,7 +24,7 @@ TaskHandle_t TASK_Handle_My_Loop = NULL;
 // ########################### 外设 ###########################
 
 // SD卡状态 (正常为空, 否则为 错误信息)
-char *sd_status = nullptr;
+IN_PSRAM String sd_status = "";
 
 // 屏幕背光 占空比(%)
 float bl_duty = LEDC_DEFAULT_DUTY;	// 默认占空比
@@ -37,30 +38,30 @@ GyroData gyroData;
 
 // ###################### 屏幕刷新 与 LVGL ######################
 
-uint32_t screenWidth;
-uint32_t screenHeight;
-uint32_t bufSize;
-lv_disp_draw_buf_t draw_buf;
+IN_PSRAM uint32_t screenWidth;
+IN_PSRAM uint32_t screenHeight;
+IN_PSRAM uint32_t bufSize;
+IN_PSRAM lv_disp_draw_buf_t draw_buf;
 lv_color_t *disp_draw_buf;
-lv_disp_drv_t disp_drv;
+IN_PSRAM lv_disp_drv_t disp_drv;
 
 // 定义 LVGL对象 和 显示的文本
-lv_obj_t * main_panel;
-lv_obj_t * main_label;
-lv_obj_t * ta;
-lv_obj_t * kb;
-int a = sizeof(String);
+IN_PSRAM lv_obj_t * main_panel;
+IN_PSRAM lv_obj_t * main_label;
+IN_PSRAM lv_obj_t * ta;
+IN_PSRAM lv_obj_t * kb;
+int a = sizeof(lv_obj_t);
 
 // ##################### 录音 与 Qwen-ASR #####################
 
-uint16_t *pcm_data;         // 录音缓存区
-size_t bytes_read = 0;
-uint32_t recordingSize = 0;
+IN_PSRAM uint16_t *pcm_data;         // 录音缓存区
+IN_PSRAM size_t bytes_read = 0;
+IN_PSRAM uint32_t recordingSize = 0;
 
-websockets::WebsocketsClient client;
-String asr_text = "";   // 最终识别结果文本
-bool asr_idle = 1;      // 是否空闲
-int eventIdCounter = 0; // 事件ID计数器
+IN_PSRAM websockets::WebsocketsClient client;
+IN_PSRAM String asr_text = "";   // 最终识别结果文本
+IN_PSRAM bool asr_idle = 1;      // 是否空闲
+IN_PSRAM int eventIdCounter = 0; // 事件ID计数器
 
 // ######################## 状态变量 ##########################
 
@@ -74,20 +75,20 @@ String tmp_key;    // 读取时的临时按键 (仅限 read_key()、check_key()�
 // ######################## 拼音输入法 ########################
 
 #define MOVE_WORDS 6  // 一次移动词数
-lv_style_t style_pinyin;
-std::vector<String> word_result; // 候选词列表
-String candidate_str = ""; // 候选词列表 的 字符串
-lv_obj_t * candidate_l;    // 候选词显示框
-lv_obj_t * pinyin_input_l; // 拼音输入框
-String pinyin_str = "";    // 拼音输入框 的 字符串(已实时同步)
-String split_result = "";  // 拼音分割结果
-uint16_t candidate_offset = 0; // 候选词显示框 的 偏移词数
-bool typing_pinyin = false; // 是否正在输入拼音标志
+IN_PSRAM lv_style_t style_pinyin;
+IN_PSRAM std::vector<String> word_result; // 候选词列表
+IN_PSRAM String candidate_str = ""; // 候选词列表 的 字符串
+IN_PSRAM lv_obj_t * candidate_l;    // 候选词显示框
+IN_PSRAM lv_obj_t * pinyin_input_l; // 拼音输入框
+IN_PSRAM String pinyin_str = "";    // 拼音输入框 的 字符串(已实时同步)
+IN_PSRAM String split_result = "";  // 拼音分割结果
+IN_PSRAM uint16_t candidate_offset = 0; // 候选词显示框 的 偏移词数
+IN_PSRAM bool typing_pinyin = false; // 是否正在输入拼音标志
 
 // ######################### 对话管理 #########################
 
 // 最大对话窗口 个数
-#define MAX_CHAT_WINDOW 3
+#define MAX_CHAT_WINDOW 5
 // 最大 保存的对话轮数
 #define MAX_MESSAGES 10
 
@@ -99,21 +100,19 @@ struct chat_window_t{
 	std::vector<String> chatHistory; // 使用一个数组来存储 每一条JSON格式的消息(String) max:MAX_MESSAGES * 2 + 1
 	uint32_t ta_pos = 0;
 	int16_t main_label_pos = 0;
-} chat_windows[MAX_CHAT_WINDOW];
+} IN_PSRAM chat_windows[MAX_CHAT_WINDOW];
 
 // 当前选中的 对话窗口
-uint8_t chat_window_select = 0;
+IN_PSRAM uint8_t chat_window_select = 0;
 #define current_window chat_windows[chat_window_select]
 
 // ####################### 请求管理 ##########################
 
 // 请求所需变量
-String response;
-String answer;
-String proced;
+IN_PSRAM String answer;
 
 // 用户提示词
-String user_prompt = "";
+IN_PSRAM String user_prompt = "";
 
 bool use_proc = 0;         // 是否使用 拼音预处理,       由 &2 键切换
 bool show_proced = 0;      // 是否显示 预处理过的 提示词, 由 &3 键切换
@@ -121,15 +120,14 @@ bool calc_mode   = 0;      // 是否启用 计算器模式,       由 &4 键切�
 // bool enable_search = 0; // 是否启用 联网搜索,         未实现
 
 String tmp_output;      // 临时文本输出
-JsonDocument tmp_doc;
 
 // ######################## 其他 ###########################
 
 // 蓝牙(BLE) 传输器
-BLETextLink bleLink;
+IN_PSRAM BLETextLink bleLink;
 
 // 储存 时间信息
-tm timeinfo;
+IN_PSRAM tm timeinfo;
 
 // SD卡使用的 SPI总线 (需与 屏幕总线 一致)
 SPIClass sd_spi_bus(FSPI);
@@ -536,7 +534,7 @@ void register_ws_callback() {
 		// Serial.print("[Received] ");
 		// Serial.println(message.data());
 		
-		tmp_doc.clear();
+		JsonDocument tmp_doc;
 		
 		DeserializationError error = deserializeJson(tmp_doc, message.data());
 		if (error) {
@@ -602,8 +600,9 @@ void register_ws_callback() {
 
 // 录音 并 发送到ASR识别
 void run_asr(const char *record_key) {
-	if (!asr_idle) return;
-	print_heap_free();
+	// Serial.println("ASR 0");
+	// if (!asr_idle) return;
+	// Serial.println("ASR 1");
 
 	// 保存当前文本, 用于后续恢复
 	main_label_tmp_save();
@@ -646,7 +645,7 @@ void asr_send(uint16_t* pcm_data, uint32_t size) {
 		return;
 	}
 	
-	tmp_doc.clear();
+	JsonDocument tmp_doc;
 
 	Serial.print("[ASR] 连接服务器中 ... ");
 	main_label_set_text("[ASR] 连接服务器中 ... ");
@@ -829,7 +828,7 @@ int8_t getAPIanswer(const char* _SYSTEM_PROMPT, const String& _userPrompt, const
     http.addHeader("Authorization", "Bearer " apiKey);
 
 	// --- 构建请求体 ---
-	tmp_doc.clear();
+	JsonDocument tmp_doc;
 	tmp_doc["model"] = _MAIN_MODEL_NAME;
 
 	if (useHistory) {
@@ -867,7 +866,7 @@ int8_t getAPIanswer(const char* _SYSTEM_PROMPT, const String& _userPrompt, const
 	print_heap_free();
     int httpResponseCode = http.POST(jsonPayload);
     
-	response = http.getString();
+	String response = http.getString();
 	http.end();
 	
 	if (httpResponseCode > 0){
@@ -1061,15 +1060,19 @@ void scroll_main_p(int16_t y = 0, bool lock = 1) {
 void word_match(const String &input_str, std::vector<String> &word_result, String &split_result) {
 	split_result = "";
 	word_result.clear();
+	// word_result.shrink_to_fit();
+	std::vector<String>().swap(word_result);
+
 	if (!input_str.length()) {
 		Serial.println("[Error] word_match(): input_str is empty!");
 		return;
 	}
 
+	// print_heap_free();
 	match_case_node_t sp;
 	uint16_t idx = 0;
 
-	Serial.println("[INFO] word_match(): input_str=" + input_str);
+	Serial.print("[INFO] word_match(): input_str="); Serial.println(input_str);
 	word_dict_search_result_t *blk = zh_match_word(input_str.c_str(), &sp);
 
 	uint8_t loc = 0;
@@ -1103,6 +1106,7 @@ void word_match(const String &input_str, std::vector<String> &word_result, Strin
 		}
 	}
 	zh_word_free_match(blk);
+	// print_heap_free();
 }
 
 // 清空 拼音输入框 与 候选栏 (未加锁)
@@ -1110,6 +1114,8 @@ void clear_pinyin() {
 	lv_label_set_text(pinyin_input_l, "");
 	lv_label_set_text(candidate_l, "");
 	word_result.clear();
+	// word_result.shrink_to_fit();
+	std::vector<String>().swap(word_result);
 	pinyin_str = "";
 	candidate_offset = 0;
 }
@@ -1383,11 +1389,11 @@ void connect_wifi() {
 void print_heap_free() {
 	// 查看 片内 RAM 和 PSRAM 剩余堆
 	Serial.println();
-	Serial.println("===============================");
-	Serial.printf ("== 内部RAM 最大分配: %.2f KiB ==\r\n", heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024.0);
-	Serial.printf ("== 内部RAM 空闲: %.2f KiB ===\r\n",  heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024.0);
-	Serial.printf ("== PSRAM 空闲: %.2f KiB =====\r\n",   heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024.0);
-	Serial.println("===============================");
+	Serial.println("============================");
+	Serial.printf ("== 堆 最大分配: %.2f KiB ====\r\n", heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024.0);
+	Serial.printf ("== 堆 空闲: %.2f KiB ======\r\n",  heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024.0);
+	Serial.printf ("== PSRAM 空闲: %.2f KiB ==\r\n",   heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024.0);
+	Serial.println("============================");
 }
 
 // 在 Core0(my_loop) 空闲(等待)时 执行的代码

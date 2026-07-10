@@ -428,6 +428,7 @@ void getAnswer(String& _user_prompt) {
 			answer = errMsg;
         }
 	} else if (use_proc == 1) {  // 使用 拼音预处理
+		String proced;
 		if (getAPIanswer(PROC_SYS_PROMPT, _user_prompt, PROC_MODEL_NAME, proced, false) != 0) {
 			answer = proced;
 			return;
@@ -575,22 +576,21 @@ void hardware_init() {
 
 
 void setup() {
-	heap_caps_malloc_extmem_enable(64);
-
-	Serial.begin(115200);
+	heap_caps_malloc_extmem_enable(128);
 	print_heap_free();
-
+	Serial.begin(115200);
+	
 	hardware_init();  // 硬件 初始化
 	
-	// 预分配对话历史到PSRAM，降低SRAM碎片化
-	if (psramFound()) {
-		for (int i = 0; i < MAX_CHAT_WINDOW; i++) {
-			chat_windows[i].chatHistory.reserve(MAX_MESSAGES * 2 + 1);
-		}
-		response.reserve(2048);
-		answer.reserve(2048);
-		proced.reserve(2048);
-	}
+	// // 预分配对话历史到PSRAM，降低SRAM碎片化
+	// if (psramFound()) {
+	// 	for (int i = 0; i < MAX_CHAT_WINDOW; i++) {
+	// 		chat_windows[i].chatHistory.reserve(MAX_MESSAGES * 2 + 1);
+	// 	}
+	// 	response.reserve(2048);
+	// 	answer.reserve(2048);
+	// 	proced.reserve(2048);
+	// }
 	
 	// 声明字体
 	LV_FONT_DECLARE(cgr_yuyag_w2_ext4);

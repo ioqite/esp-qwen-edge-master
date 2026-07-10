@@ -155,6 +155,7 @@ static __split_method_list_t* mlist_init(void) {
 }
 
 /* insert a split method element to linked list */
+/* note: if m is a duplicate (cmp == 0), m is freed here to avoid memory leak */
 static void mlist_insert(__split_method_list_t* m_list, __split_method_t* m) {
     if (m_list == NULL || m == NULL) return;
     int res = m_list->head == NULL ? -1 : mnode_cmp(m, m_list->head);
@@ -164,7 +165,7 @@ static void mlist_insert(__split_method_list_t* m_list, __split_method_t* m) {
         m_list->num++;
         return;
     }
-    if (res == 0) return; // do nothing
+    if (res == 0) { zh_buffer_free(m); return; } /* duplicate, free to avoid leak */
     __split_method_t* pre = m_list->head;
     __split_method_t* nxt = m_list->head->next;
     while (1) {
@@ -175,7 +176,7 @@ static void mlist_insert(__split_method_list_t* m_list, __split_method_t* m) {
             m_list->num++;
             return;
         }
-        if (res == 0) return;
+        if (res == 0) { zh_buffer_free(m); return; } /* duplicate, free to avoid leak */
         nxt = pre->next->next;
         pre = pre->next;
     }
@@ -496,10 +497,13 @@ static cJSON* cjson_parse_piece(char* buf, uint32_t* bytes_left) {
     return item;
 }
 
-/* auxiliary function for exit */
+/* auxiliary function for exit - frees res_str and returns NULL */
+/* note: *res_str is freed and set to NULL so caller's pointer is invalidated */
 static __word_block_t* word_dict_exit(char** res_str) {
-    zh_buffer_free(*res_str);
-    res_str = NULL;
+    if (res_str != NULL) {
+        zh_buffer_free(*res_str);
+        *res_str = NULL;   /* invalidate caller's pointer */
+    }
     return NULL;
 }
 
@@ -507,14 +511,18 @@ static __word_block_t* word_dict_exit(char** res_str) {
 * @brief reshape the word block according to search type
 * @param w_res   the word block to be modified  
 * @param search_state  refer to @defgroup word_search_state
-* @return the modified w_res pointer
+* @return the modified w_res pointer (NULL on failure, in which case w_res is freed)
 */
 static __word_block_t* wordblock_reshape(__word_block_t* w_res, uint8_t search_state) {
     if (!w_res) return NULL;
     if (search_state == WORD_SEARCH_STATE_CODE_PREC_MATCH && w_res->num.code_nbr > ZH_WORD_CODE_DISP_NUM) {
         /* when it not reach, do nothing */
         __word_block_t* w3 = wordblock_init(WORD_BLK_TYPE_CODES);
-        if (w3 == NULL) return NULL;
+        if (w3 == NULL) {
+            /* free w_res to avoid memory leak on failure (caller takes return as new owner) */
+            wordblock_destroy(w_res);
+            return NULL;
+        }
 
         uint16_t buf1_sz = 3 * ZH_WORD_CODE_DISP_NUM;
         uint16_t buf2_sz = 3 * (w_res->num.code_nbr - ZH_WORD_CODE_DISP_NUM);
@@ -522,8 +530,12 @@ static __word_block_t* wordblock_reshape(__word_block_t* w_res, uint8_t search_s
         uint8_t* new_buf2 = (uint8_t *)zh_buffer_malloc(buf2_sz + 1);
         if (!new_buf1 || !new_buf2)
         {
+            /* free any partially allocated buffer */
             if (new_buf1) zh_buffer_free(new_buf1);
             if (new_buf2) zh_buffer_free(new_buf2);
+            /* free w3 and w_res to avoid memory leak on allocation failure */
+            zh_buffer_free(w3);
+            wordblock_destroy(w_res);
             return NULL;
         }
         else
@@ -579,8 +591,13 @@ static __word_block_t* word_dict_search(const char* str, __split_method_list_t* 
     uint8_t* buf = NULL;
     __word_block_t* w1 = wordblock_init(WORD_BLK_TYPE_CODES);
     uint8_t res_tmp = zh_match_code_vague(code_str, res_str, MAX_CODE_SEARCH_TYPES, &br);
-    if (res_tmp == 0) buf = (uint8_t *)zh_buffer_malloc(3 * br + 1);
-    if (w1 == NULL || res_tmp || buf == NULL) return word_dict_exit(&res_str);
+    if (res_tmp == 0 && br > 0) buf = (uint8_t *)zh_buffer_malloc(3 * br + 1);
+    if (w1 == NULL || res_tmp || buf == NULL) {
+        /* free everything that may have been allocated to avoid leaks */
+        if (buf != NULL) zh_buffer_free(buf);
+        wordblock_destroy(w1);
+        return word_dict_exit(&res_str);
+    }
     
     for (int i = 0; i < br; i++) {
         memcpy(buf + 3 * i, res_str + 3 * (br - 1 - i), 3); 
@@ -605,16 +622,21 @@ static __word_block_t* word_dict_search(const char* str, __split_method_list_t* 
     /** process multi-code word match case */
     if(!FS_is_begin) {
         ZH_LOG_ERROR("Run 'zh_pinyin_decoder_init()' to begin file system at first !!!");
+        /* free res_str and w_res (which contains w1) to avoid memory leak */
+        zh_buffer_free(res_str);
+        wordblock_destroy(w_res);
         return NULL;
     }
 
     __word_block_t* w2 = wordblock_init(WORD_BLK_TYPE_WORDS);
     uint8_t* word_nbr = (uint8_t *)zh_buffer_malloc(MAX_WORD_BLK_WORD_NUM + 1);
-    word_nbr[0] = 0;
+    if (word_nbr != NULL) word_nbr[0] = 0;
     
     if (!FS_is_begin || !w2 || !word_nbr) {
         ZH_LOG_WARNING("Word Dictionary file \"zh_word_dict.json\" not exist");
         zh_buffer_free(res_str);
+        /* free w2 and word_nbr separately to avoid leaks when only one is allocated */
+        if (word_nbr != NULL) zh_buffer_free(word_nbr);
         wordblock_destroy(w2);
         wordblock_destroy(w_res);
         return NULL;
@@ -627,7 +649,9 @@ static __word_block_t* word_dict_search(const char* str, __split_method_list_t* 
     uint8_t  word_buff_ptr = 0;    /* location pointer  */
     // if (fread(word_dict_buffer, sizeof(uint8_t), sizeof(word_dict_buffer), fp) == 0) {
     if (file_word_dict.read(word_dict_buffer, sizeof(word_dict_buffer)) == 0) {
+        /* free res_str and w2 (which owns word_nbr) to avoid leaks */
         zh_buffer_free(res_str);
+        wordblock_destroy(w2);
         return w_res;
     }
     /*  parse word dictionary json file */
@@ -636,6 +660,8 @@ static __word_block_t* word_dict_search(const char* str, __split_method_list_t* 
         uint32_t bytes_left = 0;
         cJSON *item = cjson_parse_piece((char *)word_dict_buffer, &bytes_left);
         if (item == NULL || item->child == NULL || item->child->string[0] > str[0]) {
+            /* free the parsed cJSON object before breaking to avoid leak */
+            if (item != NULL) cJSON_Delete(item);
             break;  /* json file end or can't parse */
         }
         for (cJSON* js = item->child; js != NULL; js = js->next) {
@@ -765,7 +791,10 @@ uint8_t zh_match_code_vague(const char* str, char* res_str, uint8_t num, uint8_t
         return 1;
     }
     uint8_t v_br = 0;
-    if (get_match_idx(str, &mid, num, v_idx, (int8_t*)&v_br)) return 1;
+    if (get_match_idx(str, &mid, num, v_idx, (int8_t*)&v_br)) {
+        zh_buffer_free(v_idx);   /* free v_idx on early failure to avoid leak */
+        return 1;
+    }
 
     if(!FS_is_begin) {
         zh_buffer_free(v_idx);
@@ -852,7 +881,11 @@ __split_method_list_t* zh_pinyin_get_split(const char* str) {
 
     g_word_match_number = 0;
     uint8_t spm[MAX_WORD_LENGTH] = { 0, 0, 0, 0 };
-    if (pinyin_dfs(m_list, str, spm, 0, 0) || m_list->head == NULL) return NULL;
+    /* free m_list on failure to avoid memory leak */
+    if (pinyin_dfs(m_list, str, spm, 0, 0) || m_list->head == NULL) {
+        mlist_destroy(m_list);
+        return NULL;
+    }
     return m_list;
 }
 
@@ -901,10 +934,10 @@ uint8_t zh_pinyin_filter_split(__split_method_list_t* m_list) {
 
 /**
  * @brief free the split method object
+ * @note  caller should set its own pointer to NULL after calling this
  */
 void zh_pinyin_free_split(__split_method_list_t* m_list) {
     if (m_list != NULL) mlist_destroy(m_list);
-    m_list = NULL;
 }
 
 #if (USE_ZH_WORD_MATCH == 1)
@@ -916,11 +949,15 @@ void zh_pinyin_free_split(__split_method_list_t* m_list) {
 /// @return 
 __word_block_t* zh_match_word(const char* str, __split_method_t *sp) {
     if (chk_valid_string(str)) return NULL;
-    uint8_t res = 0;
 
     /* split pinyin */
     __split_method_list_t* m_list = zh_pinyin_get_split(str);
-    if (zh_pinyin_filter_split(m_list)) return NULL;   /* filter the split string method */
+    if (m_list == NULL) return NULL;
+    /* free m_list on filter failure to avoid memory leak */
+    if (zh_pinyin_filter_split(m_list)) {
+        zh_pinyin_free_split(m_list);
+        return NULL;
+    }
     
     if (sp != NULL) memcpy(sp, m_list->head, sizeof(__split_method_t));
     __word_block_t *w = word_dict_search(str, m_list);
@@ -960,6 +997,7 @@ int8_t zh_pinyin_begin() {
 #endif
     if (!file_code_table) {
         ZH_LOG_ERROR("Failed to open file for reading");
+        FS_is_begin = false;
         return 1;
     }
 #if (USE_FAT_FS == 1)
@@ -968,10 +1006,15 @@ int8_t zh_pinyin_begin() {
     file_word_dict = LittleFS.open(ZH_WORD_DICTIONARY_FILE_NAME, FILE_READ);
 #else
     ZH_LOG_ERROR("Choose a file system in user_config.h first !!!");
+    file_code_table.close();   /* close already-opened file to avoid resource leak */
+    FS_is_begin = false;
     return 1;
 #endif
-    if (!file_code_table) {
+    /* bug fix: original code checked !file_code_table here, should be !file_word_dict */
+    if (!file_word_dict) {
         ZH_LOG_ERROR("Failed to open file for reading");
+        file_code_table.close();   /* close already-opened file to avoid resource leak */
+        FS_is_begin = false;
         return 1;
     }
     return 0;
