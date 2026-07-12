@@ -42,6 +42,14 @@ void my_loop(void *param) {
 			ta_set_text("");
 		/* 获取结果 */} else if (proc_key == "$12") {
 			if (lvgl_mux_lock()) { // 上锁
+				// 关闭 拼音输入 并 清空输入数据、隐藏 候选词 与 输入框
+				typing_pinyin = false;
+				if (lvgl_mux_lock()) {
+					lv_obj_add_flag(candidate_l, LV_OBJ_FLAG_HIDDEN);
+					lv_obj_add_flag(pinyin_input_l, LV_OBJ_FLAG_HIDDEN);
+					clear_pinyin();
+					lvgl_mutex_unlock(); // 解锁
+				}
 				user_prompt = lv_textarea_get_text(ta);
 				if (!user_prompt.startsWith("-scr")) {
 					scroll_main_p(0, 0);
@@ -138,14 +146,15 @@ void my_loop(void *param) {
 		/*     */ } else if (proc_key == "&3") {
 		/* 计算器 */}else if (proc_key == "&4") {
 			ta_tmp_show((calc_mode = !calc_mode) ? "计算器模式: 1" : "计算器模式: 0");
-		
 		/* 拼音 */ } else if (proc_key == "&5") {
 			if (lvgl_mux_lock()) { // 上锁
 				if ((typing_pinyin = !typing_pinyin)) { // 切换到了 拼音输入模式
+					// 清空输入数据、显示 候选词 与 输入框
 					clear_pinyin();
 					lv_obj_clear_flag(candidate_l, LV_OBJ_FLAG_HIDDEN);
 					lv_obj_clear_flag(pinyin_input_l, LV_OBJ_FLAG_HIDDEN);
 				} else { // 退出了 拼音输入模式
+					// 清空输入数据 并 隐藏 候选词 与 输入框
 					lv_obj_add_flag(candidate_l, LV_OBJ_FLAG_HIDDEN);
 					lv_obj_add_flag(pinyin_input_l, LV_OBJ_FLAG_HIDDEN);
 					clear_pinyin();
@@ -169,7 +178,7 @@ void my_loop(void *param) {
 		core0_loop_func();
 	}
 	main_label_set_text("循环已终止");
-	vTaskDelete(NULL); // 防止循环终止
+	vTaskDelete(NULL); // 循环终止
 }
 
 // 根据情况发送不同请求
@@ -200,7 +209,7 @@ void getAnswer(String& _user_prompt) {
 			vTaskDelay(100 / portTICK_PERIOD_MS);
 			if (read_key() != "") {
 				main_label_set_text("#db6319 已停止刷新 #\r\n");
-				main_label_add_text(answer.c_str());
+				main_label_add_text(buffer);
 				break;
 			}
 		}

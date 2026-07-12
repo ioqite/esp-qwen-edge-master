@@ -75,6 +75,7 @@ String tmp_key;    // 读取时的临时按键 (仅限 wait_until_read_key()、r
 // ######################## 拼音输入法 ########################
 
 #define MOVE_WORDS 6  // 一次移动词数
+#define MIN_CANDIDATE_NUM  9 // 移动时 最小候选词数
 IN_PSRAM lv_style_t style_pinyin;
 IN_PSRAM std::vector<String> word_result; // 候选词列表
 IN_PSRAM String candidate_str = ""; // 候选词列表 的 字符串
@@ -602,10 +603,6 @@ void ws_callback(websockets::WebsocketsMessage message) {
 
 // 录音 并 发送到ASR识别
 void run_asr(const char *record_key) {
-	// Serial.println("ASR 0");
-	// if (!asr_idle) return;
-	// Serial.println("ASR 1");
-
 	// 保存当前文本, 用于后续恢复
 	main_label_tmp_save();
 
@@ -623,6 +620,10 @@ void run_asr(const char *record_key) {
 	main_label_set_text("ASR 识别中");
 	// 发送音频到Qwen-ASR进行识别
 	asr_send(pcm_data, recordingSize);
+
+	// 等待最终结果（在回调中处理session.finished事件）
+	Serial.println("[ASR] 等待最终结果");
+	main_label_set_text("[ASR] 等待最终结果\n");
 	
 	// 释放内存
 	free(pcm_data);
@@ -721,7 +722,6 @@ void asr_send(uint16_t* pcm_data, uint32_t size) {
 		tmp_doc["type"] = "input_audio_buffer.append";
 		
 		// Base64编码音频数据
-		// String base64Audio = ;
 		tmp_doc["audio"] = base64::encode((uint8_t*)pcm_data + offset, chunkSize);
 		
 		serializeJson(tmp_doc, tmp_output);
@@ -762,10 +762,6 @@ void asr_send(uint16_t* pcm_data, uint32_t size) {
 	Serial.println("[ASR] session.finish");
 	// main_label_set_text("[ASR] session.finish\n");
 	client.send(tmp_output);
-	
-	// 等待最终结果（在回调中处理session.finished事件）
-	Serial.println("[ASR] 等待最终结果");
-	main_label_set_text("[ASR] 等待最终结果\n");
 }
 
 /**
@@ -815,13 +811,13 @@ int8_t getAPIanswer(const char* _SYSTEM_PROMPT, const String& _userPrompt, const
 		return -2;
 	}
 
-    WiFiClientSecure client;
-    client.setInsecure(); // 跳过SSL证书验证
+    NetworkClientSecure networkClient;
+    networkClient.setInsecure(); // 跳过SSL证书验证
 
     HTTPClient http;
 	http.setTimeout(65535);
 	http.setConnectTimeout(4294967295);
-    http.begin(client, API_ENDPOINT);
+    http.begin(networkClient, API_ENDPOINT);
     // http.begin(API_ENDPOINT);
     http.addHeader("Content-Type", "application/json");
     http.addHeader("Authorization", "Bearer " apiKey);
@@ -1186,8 +1182,8 @@ void proc_other_input_key() {
 	}
 	// 拼音输入下的 ] -> offset+MOVE_WORDS (左移 MOVE_WORDS 项)
 	else if (typing_pinyin && pinyin_str.length() && proc_key == "]") {
-		if (candidate_offset+MOVE_WORDS*2 >= word_result.size()) {
-			candidate_offset = word_result.size() - MOVE_WORDS;
+		if (candidate_offset+MOVE_WORDS+MIN_CANDIDATE_NUM >= word_result.size()) {
+			candidate_offset = word_result.size() - MIN_CANDIDATE_NUM;
 		} else candidate_offset += MOVE_WORDS;
 		update_candidate();
 	}
