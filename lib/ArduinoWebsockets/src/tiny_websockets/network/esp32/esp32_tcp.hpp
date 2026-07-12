@@ -28,12 +28,9 @@ namespace websockets { namespace network {
       this->client.setPrivateKey(private_key);
     }
 
-    //这里修改了 ~
     void setInsecure() {
       this->client.setInsecure();
     }
-    //这里修改了 ^
-    
   };
 
 
@@ -54,7 +51,7 @@ namespace websockets { namespace network {
     
     TcpClient* accept() override {
       while(available()) {
-        auto client = server.available();
+        auto client = server.accept();
         if(client) {
           return new Esp32TcpClient{client};
         }

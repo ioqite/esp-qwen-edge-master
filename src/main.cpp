@@ -22,11 +22,11 @@ void my_loop(void *param) {
 	// 初始化 拼音解码器
 	zh_pinyin_begin();
 
-	// WebSocket消息回调
-	register_ws_callback();
+	// 注册 WebSocket消息回调
+	client.onMessage(ws_callback);
 
 	Serial.println("Setup done");
-	print_heap_free();
+	print_heap_free("初始化完毕");
 
 	// 主循环 (Core 0)
 	while (1) {
@@ -174,7 +174,7 @@ void my_loop(void *param) {
 
 // 根据情况发送不同请求
 void getAnswer(String& _user_prompt) {
-	print_heap_free();
+	print_heap_free("getAnswer 前");
 	// 输入为空
 	if (_user_prompt == "") {
 		Serial.println("输入为空");
@@ -599,8 +599,8 @@ void hardware_init() {
 
 void setup() {
 	heap_caps_malloc_extmem_enable(128);
-	print_heap_free();
 	Serial.begin(115200);
+	print_heap_free("初始化前");
 	
 	hardware_init();  // 硬件 初始化
 	

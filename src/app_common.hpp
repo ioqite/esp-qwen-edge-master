@@ -175,7 +175,7 @@ void getAnswer(String& _user_prompt);
 void loop();
 
 // 获取 剩余RAM
-void print_heap_free();
+void print_heap_free(String title);
 
 // ============== 文本输入框ta 操作 ===============
 // 添加文本到 ta 上

@@ -30,9 +30,9 @@ IN_PSRAM String sd_status = "";
 float bl_duty = LEDC_DEFAULT_DUTY;	// 默认占空比
 
 // IMU 和 鼠标指针
-QMI8658 IMU;
-AccelData accelData;
-GyroData gyroData;
+IN_PSRAM QMI8658 IMU;
+IN_PSRAM AccelData accelData;
+IN_PSRAM GyroData gyroData;
 // float touchpad_x = 160;
 // float touchpad_y = 120;
 
@@ -92,7 +92,7 @@ IN_PSRAM bool typing_pinyin = false; // 是否正在输入拼音标志
 // 最大 保存的对话轮数
 #define MAX_MESSAGES 10
 
-String main_label_text_tmp;
+IN_PSRAM String main_label_text_tmp;
 
 struct chat_window_t{
 	String ta_text_save;
@@ -100,7 +100,8 @@ struct chat_window_t{
 	std::vector<String> chatHistory; // 使用一个数组来存储 每一条JSON格式的消息(String) max:MAX_MESSAGES * 2 + 1
 	uint32_t ta_pos = 0;
 	int16_t main_label_pos = 0;
-} IN_PSRAM chat_windows[MAX_CHAT_WINDOW];
+};
+chat_window_t IN_PSRAM chat_windows[MAX_CHAT_WINDOW];
 
 // 当前选中的 对话窗口
 IN_PSRAM uint8_t chat_window_select = 0;
@@ -119,7 +120,7 @@ bool show_proced = 0;      // 是否显示 预处理过的 提示词, 由 &3 键
 bool calc_mode   = 0;      // 是否启用 计算器模式,       由 &4 键切换
 // bool enable_search = 0; // 是否启用 联网搜索,         未实现
 
-String tmp_output;      // 临时文本输出
+IN_PSRAM String tmp_output;      // 临时文本输出
 
 // ######################## 其他 ###########################
 
@@ -528,74 +529,75 @@ void BLEonReceive(const String& msg) {
 
 // ############################### 请求 ##################################
 
-// 注册 WebSocket 回调
-void register_ws_callback() {
-	client.onMessage([&](websockets::WebsocketsMessage message) {
-		// Serial.print("[Received] ");
-		// Serial.println(message.data());
-		
-		JsonDocument tmp_doc;
-		
-		DeserializationError error = deserializeJson(tmp_doc, message.data());
-		if (error) {
-			Serial.print("JSON 解析错误: ");
-			Serial.println(error.f_str());
-			main_label_add_text( ( "#c81414 JSON 解析错误: #\n" + String(error.c_str()) ).c_str() );
-			return;
-		}
-		
-		const char* eventType = tmp_doc["type"];
-		
-		// 处理不同的事件类型
-		if (strcmp(eventType, "session.created") == 0) {
-			Serial.println("[ASR | 事件] session.created");
-		}
-		else if (strcmp(eventType, "session.updated") == 0) {
-			Serial.println("[ASR | 事件] session.updated");
-		}
-		else if (strcmp(eventType, "input_audio_buffer.speech_started") == 0) {
-			Serial.println("[ASR | 事件] Speech started detected (VAD)");
-			// main_label_add_text("[ASR | 事件] Speech started detected (VAD)\n");
-		}
-		else if (strcmp(eventType, "input_audio_buffer.speech_stopped") == 0) {
-			Serial.println("[ASR | 事件] Speech stopped detected (VAD)");
-			// main_label_add_text("[ASR | 事件] Speech stopped detected (VAD)\n");
-		}
-		else if (strcmp(eventType, "conversation.item.input_audio_transcription.text") == 0) {
-			// 实时识别结果
-			String fullText = tmp_doc["text"].as<String>() + tmp_doc["stash"].as<String>();
-			Serial.print("[ASR | 实时识别] ");
-			Serial.println(fullText);
-			// main_label_set_text("[ASR | 实时识别] " + fullText + "\n");
-		}
-		else if (strcmp(eventType, "conversation.item.input_audio_transcription.completed") == 0) {
-			// 最终识别结果
-			asr_text = tmp_doc["transcript"].as<String>();
-			asr_idle = 1;
-			Serial.print("[ASR] 最终识别结果：");
-			Serial.println(asr_text);
-			// main_label_add_text("[ASR] 最终识别结果：" + asr_text + "\n");
+// WebSocket 回调
+void ws_callback(websockets::WebsocketsMessage message) {
+	// Serial.print("[Received] ");
+	// Serial.println(message.data());
+	
+	JsonDocument tmp_doc;
+	
+	DeserializationError error = deserializeJson(tmp_doc, message.data());
+	if (error) {
+		Serial.print("JSON 解析错误: ");
+		Serial.println(error.f_str());
+		main_label_add_text( ( "#c81414 JSON 解析错误: #\n" + String(error.c_str()) ).c_str() );
+		return;
+	}
+	
+	const char* eventType = tmp_doc["type"];
+	
+	// 处理不同的事件类型
+	if (strcmp(eventType, "session.created") == 0) {
+		Serial.println("[ASR | 事件] session.created");
+	}
+	else if (strcmp(eventType, "session.updated") == 0) {
+		Serial.println("[ASR | 事件] session.updated");
+	}
+	else if (strcmp(eventType, "input_audio_buffer.speech_started") == 0) {
+		Serial.println("[ASR | 事件] Speech started detected (VAD)");
+		// main_label_add_text("[ASR | 事件] Speech started detected (VAD)\n");
+	}
+	else if (strcmp(eventType, "input_audio_buffer.speech_stopped") == 0) {
+		Serial.println("[ASR | 事件] Speech stopped detected (VAD)");
+		// main_label_add_text("[ASR | 事件] Speech stopped detected (VAD)\n");
+	}
+	else if (strcmp(eventType, "conversation.item.input_audio_transcription.text") == 0) {
+		// 实时识别结果
+		String fullText = tmp_doc["text"].as<String>() + tmp_doc["stash"].as<String>();
+		Serial.print("[ASR | 实时识别] ");
+		Serial.println(fullText);
+		// main_label_set_text("[ASR | 实时识别] " + fullText + "\n");
+	}
+	else if (strcmp(eventType, "conversation.item.input_audio_transcription.completed") == 0) {
+		// 最终识别结果
+		asr_text = tmp_doc["transcript"].as<String>();
+		asr_idle = 1;
+		Serial.print("[ASR] 最终识别结果：");
+		Serial.println(asr_text);
+		// main_label_add_text("[ASR] 最终识别结果：" + asr_text + "\n");
 
-			if (asr_text.length() > 0) {
-				if (lvgl_mux_lock()) { // 上锁
-					lv_textarea_add_text(ta, asr_text.c_str());
-					lvgl_mutex_unlock(); // 解锁
-				}
+		if (asr_text.length() > 0) {
+			if (lvgl_mux_lock()) { // 上锁
+				lv_textarea_add_text(ta, asr_text.c_str());
+				lvgl_mutex_unlock(); // 解锁
 			}
 		}
-		else if (strcmp(eventType, "session.finished") == 0) {
-			// 会话结束
-			Serial.println("[ASR | 事件] session.finished\n");
+		client.cleanup();
+		print_heap_free("ASR识别完成 并清理");
+		// client.close(websockets::CloseReason_NormalClosure);
+	}
+	else if (strcmp(eventType, "session.finished") == 0) {
+		// 会话结束
+		Serial.println("[ASR | 事件] session.finished\n");
+	}
+	else if (strcmp(eventType, "error") == 0) {
+		// 错误处理
+		Serial.print("[ASR | 错误] ");
+		if (tmp_doc["error"]["message"]) {
+			Serial.println(tmp_doc["error"]["message"].as<String>());
+			main_label_add_text(("[ASR | 错误] " + tmp_doc["error"]["message"].as<String>()).c_str());
 		}
-		else if (strcmp(eventType, "error") == 0) {
-			// 错误处理
-			Serial.print("[ASR | 错误] ");
-			if (tmp_doc["error"]["message"]) {
-				Serial.println(tmp_doc["error"]["message"].as<String>());
-				main_label_add_text(("[ASR | 错误] " + tmp_doc["error"]["message"].as<String>()).c_str());
-			}
-		}
-	});
+	}
 }
 
 // 录音 并 发送到ASR识别
@@ -655,14 +657,12 @@ void asr_send(uint16_t* pcm_data, uint32_t size) {
 	client.addHeader("OpenAI-Beta", "realtime=v1");
 	
 	// 如果需要，可以设置CA证书
-	client.setCACert(nullptr);
-	client.setCertificate(nullptr);
-	client.setPrivateKey(nullptr);
+	client.setInsecure();
 
-	print_heap_free();
 	// 连接 WebSocket
+	print_heap_free("WS连接 前");
 	bool connected = client.connect(QWEN_ASR_BASE_URL "?model=" QWEN_ASR_MODEL);
-	print_heap_free();
+	print_heap_free("WS连接 后");
 	if (connected) {
 		Serial.println("OK");
 		main_label_add_text("OK\n");
@@ -685,8 +685,7 @@ void asr_send(uint16_t* pcm_data, uint32_t size) {
 	tmp_doc["session"]["input_audio_format"] = "pcm";
 	tmp_doc["session"]["sample_rate"] = SAMPLE_RATE;
 	
-	JsonObject transcription = tmp_doc["session"]["input_audio_transcription"].to<JsonObject>();
-	transcription["language"] = ASR_LANGUAGE;
+	tmp_doc["session"]["input_audio_transcription"]["language"] = ASR_LANGUAGE;
 	
 #if ENABLE_SERVER_VAD
 		// VAD模式：服务端自动检测语音起止
@@ -863,7 +862,7 @@ int8_t getAPIanswer(const char* _SYSTEM_PROMPT, const String& _userPrompt, const
 	Serial.println(jsonPayload);
    
     // 发送POST请求
-	print_heap_free();
+	print_heap_free("请求前");
     int httpResponseCode = http.POST(jsonPayload);
     
 	String response = http.getString();
@@ -1386,12 +1385,12 @@ void connect_wifi() {
 // ############################### 其他 ##################################
 
 // 获取 剩余RAM
-void print_heap_free() {
+void print_heap_free(String title = "========") {
 	// 查看 片内 RAM 和 PSRAM 剩余堆
 	Serial.println();
-	Serial.println("============================");
+	Serial.println("========= " + title + " =========");
 	Serial.printf ("== 堆 最大分配: %.2f KiB ====\r\n", heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024.0);
-	Serial.printf ("== 堆 空闲: %.2f KiB ======\r\n",  heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024.0);
+	Serial.printf ("== 堆 空闲: %.2f KiB =======\r\n",  heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024.0);
 	Serial.printf ("== PSRAM 空闲: %.2f KiB ==\r\n",   heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024.0);
 	Serial.println("============================");
 }

@@ -89,6 +89,9 @@ namespace websockets {
     void setCertificate(const char* client_ca);
     void setPrivateKey(const char* private_key);
   #endif
+    void cleanup();
+    // Alias kept for ergonomics — some users think in terms of "reset".
+    void reset() { cleanup(); }
 
     virtual ~WebsocketsClient();
 
