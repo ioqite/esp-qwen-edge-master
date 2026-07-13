@@ -17,7 +17,7 @@ bool __applyBinaryOp(double a, double b, char op, double& result, String& errMsg
         case '*': result = a * b; break;
         case '/':
             if (b == 0) {
-                errMsg += "错误: 除数不能为零\n";
+                errMsg += "#bf160d 错误: 除数不能为零 #\n";
                 return false;
             }
             result = a / b; 
@@ -26,7 +26,7 @@ bool __applyBinaryOp(double a, double b, char op, double& result, String& errMsg
             result = std::pow(a, b); 
             break;
         default:
-            errMsg += "错误: 未知二元运算符\n";
+            errMsg += "#bf160d 错误: 未知二元运算符 #\n";
             return false;
     }
     return true;
@@ -36,7 +36,7 @@ bool __applyBinaryOp(double a, double b, char op, double& result, String& errMsg
 bool __applyUnaryOp(double a, char op, double& result, String& errMsg) {
     if (op == '#') { result = -a; return true; }
     if (op == '@') { result = a; return true; }
-    errMsg += "错误: 未知一元运算符\n";
+    errMsg += "#bf160d 错误: 未知一元运算符 #\n";
     return false;
 }
 
@@ -70,7 +70,7 @@ bool calculate(const String& input, double& result, String& errMsg) {
             try {
                 values.push(numStr.toDouble());
             } catch (const std::exception& e) {
-                errMsg += "错误: 无效的数字格式 '" + numStr + "'\n";
+                errMsg += "#bf160d 错误: 无效的数字格式 '" + numStr + "' #\n";
                 return false;
             }
             continue; 
@@ -88,11 +88,11 @@ bool calculate(const String& input, double& result, String& errMsg) {
                 
                 double res;
                 if (op == '#' || op == '@') { // 一元运算符
-                    if (values.empty()) { errMsg += "错误: 表达式格式不正确\n"; return false; }
+                    if (values.empty()) { errMsg += "#bf160d 错误: 表达式格式不正确 #\n"; return false; }
                     double val = values.top(); values.pop();
                     if (!__applyUnaryOp(val, op, res, errMsg)) return false;
                 } else { // 二元运算符
-                    if (values.size() < 2) { errMsg += "错误: 表达式格式不正确\n"; return false; }
+                    if (values.size() < 2) { errMsg += "#bf160d 错误: 表达式格式不正确 #\n"; return false; }
                     double val2 = values.top(); values.pop();
                     double val1 = values.top(); values.pop();
                     if (!__applyBinaryOp(val1, val2, op, res, errMsg)) return false;
@@ -100,7 +100,7 @@ bool calculate(const String& input, double& result, String& errMsg) {
                 values.push(res);
             }
             if (operators.empty()) {
-                 errMsg += "错误: 括号不匹配\n";
+                 errMsg += "#bf160d 错误: 括号不匹配 #\n";
                  return false;
             }
             operators.pop(); // 弹出左括号 '('
@@ -128,11 +128,11 @@ bool calculate(const String& input, double& result, String& errMsg) {
                     char op = topOp; operators.pop();
                     double res;
                     if (op == '#' || op == '@') {
-                        if (values.empty()) { errMsg += "错误: 表达式格式不正确\n"; return false; }
+                        if (values.empty()) { errMsg += "#bf160d 错误: 表达式格式不正确 #\n"; return false; }
                         double val = values.top(); values.pop();
                         if (!__applyUnaryOp(val, op, res, errMsg)) return false;
                     } else {
-                        if (values.size() < 2) { errMsg += "错误: 表达式格式不正确\n"; return false; }
+                        if (values.size() < 2) { errMsg += "#bf160d 错误: 表达式格式不正确 #\n"; return false; }
                         double val2 = values.top(); values.pop();
                         double val1 = values.top(); values.pop();
                         if (!__applyBinaryOp(val1, val2, op, res, errMsg)) return false;
@@ -145,7 +145,7 @@ bool calculate(const String& input, double& result, String& errMsg) {
         // 如果遇到无法识别的字符
         else {
              // 注意：char 类型不能直接用 + 和 string 拼接，需转为 string
-             errMsg += "错误: 无效的字符 '" + String(1, currentChar) + "'\n";
+             errMsg += "#bf160d 错误: 无效的字符 '" + String(currentChar) + "' #\n";
              return false;
         }
         i++;
@@ -154,17 +154,17 @@ bool calculate(const String& input, double& result, String& errMsg) {
     // 6. 处理完所有字符后，计算栈中剩余的运算符
     while (!operators.empty()) {
         if (operators.top() == '(') {
-             errMsg += "错误: 括号不匹配\n";
+             errMsg += "#bf160d 错误: 括号不匹配 #\n";
              return false;
         }
         char op = operators.top(); operators.pop();
         double res;
         if (op == '#' || op == '@') {
-            if (values.empty()) { errMsg += "错误: 表达式格式不正确\n"; return false; }
+            if (values.empty()) { errMsg += "#bf160d 错误: 表达式格式不正确 #\n"; return false; }
             double val = values.top(); values.pop();
             if (!__applyUnaryOp(val, op, res, errMsg)) return false;
         } else {
-            if (values.size() < 2) { errMsg += "错误: 表达式格式不正确\n"; return false; }
+            if (values.size() < 2) { errMsg += "#bf160d 错误: 表达式格式不正确 #\n"; return false; }
             double val2 = values.top(); values.pop();
             double val1 = values.top(); values.pop();
             if (!__applyBinaryOp(val1, val2, op, res, errMsg)) return false;
@@ -173,7 +173,7 @@ bool calculate(const String& input, double& result, String& errMsg) {
     }
 
     if (values.size() != 1) {
-         errMsg += "错误: 表达式格式不正确\n";
+         errMsg += "#bf160d 错误: 表达式格式不正确 #\n";
          return false;
     }
     

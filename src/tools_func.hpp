@@ -1,5 +1,5 @@
+#pragma once
 #include "app_common.hpp"
-
 
 #define IN_PSRAM _SECTION_ATTR_IMPL(".ext_ram.bss", __COUNTER__)
 
@@ -50,7 +50,6 @@ IN_PSRAM lv_obj_t * main_panel;
 IN_PSRAM lv_obj_t * main_label;
 IN_PSRAM lv_obj_t * ta;
 IN_PSRAM lv_obj_t * kb;
-int a = sizeof(lv_obj_t);
 
 // ##################### 录音 与 Qwen-ASR #####################
 
@@ -71,6 +70,8 @@ bool connecting_wifi = false;  // 是否正在连接WiFi
 bool syncing_sntp = false;     // 是否正在同步SNTP时间
 String proc_key;   // 处理中的按键
 String tmp_key;    // 读取时的临时按键 (仅限 wait_until_read_key()、read_key()、BLEonReceive() 访问)
+std::vector<String> ta_history;
+uint16_t ta_history_pos = 0;
 
 // ######################## 拼音输入法 ########################
 
@@ -801,11 +802,13 @@ void addMessageToHistory(const char* role, const String content) {
 int8_t getAPIanswer(const char* _SYSTEM_PROMPT, const String& _userPrompt, const char* _MAIN_MODEL_NAME, String& _response, bool useHistory) {
 	// if (_response == NULL) return -1;
 	if (connecting_wifi) {
+		_response = "#b9450f 正在连接 WiFi #";
 		Serial.println("正在连接 WiFi");
 		main_label_set_text("#b9450f 正在连接 WiFi #");
 		return -2;
 	}
 	if (WiFi.status() != WL_CONNECTED) {
+		_response = "#e31919 未连接 WiFi #";
 		Serial.println("未连接 WiFi");
 		main_label_set_text("#e31919 未连接 WiFi #");
 		return -2;

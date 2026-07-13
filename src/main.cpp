@@ -190,6 +190,8 @@ void getAnswer(String& _user_prompt) {
 		answer = "输入为空";
 		return;
 	} 
+	// ta_history.push_back(_user_prompt);
+	
 	// 查看 时间 (自动刷新)
 	if (_user_prompt == "-t") {
 		if (syncing_sntp) {
@@ -332,6 +334,7 @@ void getAnswer(String& _user_prompt) {
 		// -sd/x -> 归递列出 SD卡根目录下 x层 目录与文件
 		// -sd/  -> 归递列出 SD卡根目录下 3层 目录与文件
 		else if (_user_prompt.indexOf('/') == 3) {
+			answer = "";
 			uint8_t levels = 3;
 			if (_user_prompt.length() > 4) { 
 				levels = (_user_prompt.substring(_user_prompt.indexOf('/') + 1)).toInt();
@@ -346,6 +349,7 @@ void getAnswer(String& _user_prompt) {
 		// -sd#x -> 归递列出 SD_PREFIX下 x层 目录与文件
 		// -sd#  -> 归递列出 SD_PREFIX下 3层 目录与文件
 		else if (_user_prompt.indexOf('#') == 3) {
+			answer = "";
 			uint8_t levels = 3;
 			if (_user_prompt.length() > 4) { 
 				levels = (_user_prompt.substring(_user_prompt.indexOf('#') + 1)).toInt();
@@ -360,9 +364,9 @@ void getAnswer(String& _user_prompt) {
 		}
 
 		// 解析 要读取的文件名
-		// -sd-xx -> 读取 SD_PREFIX目录下 textxx.txt 文件
-		else if (_user_prompt.indexOf('-') == 3 && _user_prompt.length() > 4) {
-			read_file_name = "text" + _user_prompt.substring(_user_prompt.indexOf('-') + 1) + ".txt";
+		// -sd:xx -> 读取 SD_PREFIX目录下 textxx.txt 文件
+		else if (_user_prompt.indexOf(':') == 3 && _user_prompt.length() > 4) {
+			read_file_name = SD_PREFIX "text" + _user_prompt.substring(_user_prompt.indexOf(':') + 1) + ".txt";
 		}
 		// -sd -> 读取 SD_PREFIX下 text1.txt 文件
 		else {
@@ -378,7 +382,7 @@ void getAnswer(String& _user_prompt) {
 				file.close();
 			} else {
 				Serial.printf("无法读取 %s", read_file_name.c_str());
-				answer = "无法读取 " + read_file_name;
+				answer = "#da2727 无法读取 #" + read_file_name;
 			}
 			spi_mux_unlock(); // 解锁
 		}
@@ -451,7 +455,7 @@ void getAnswer(String& _user_prompt) {
         if (success) {
             Serial.println("输入: " + _user_prompt);
             Serial.println("结果: " + String(result, 4)); // 输出结果，保留4位小数
-			answer = "结果: " + String(result, 4);
+			answer = "#10b166 结果: #" + String(result, 4);
         } else {
             // 如果失败，统一输出累积的错误信息
             Serial.println("输入: " + _user_prompt);
