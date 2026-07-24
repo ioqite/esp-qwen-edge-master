@@ -136,13 +136,17 @@ void my_loop(void *param) {
 		}
 		// 底部功能键
 		/* ASR */   else if (proc_key == "&1") {
+			hide_pinyin();
 			scroll_main_p();
 			run_asr("&1");
 			scroll_main_p();
+			recover_pinyin();
 		/* WAV */ } else if (proc_key == "&2") {
+			hide_pinyin();
 			scroll_main_p();
 			record_wav("&2");
 			scroll_main_p();
+			recover_pinyin();
 		/*     */ } else if (proc_key == "&3") {
 		/* 计算器 */}else if (proc_key == "&4") {
 			ta_tmp_show((calc_mode = !calc_mode) ? "计算器模式: 1" : "计算器模式: 0");

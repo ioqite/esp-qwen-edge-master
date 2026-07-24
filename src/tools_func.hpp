@@ -915,6 +915,7 @@ int8_t getAPIanswer(const char* _SYSTEM_PROMPT, const String& _userPrompt, const
 // 重置对话历史
 void reset_chat_history() {
     current_window.chatHistory.clear();
+	std::vector<String>().swap(current_window.chatHistory);
 }
 
 
@@ -1052,6 +1053,35 @@ void scroll_main_p(int16_t y = 0, bool lock = 1) {
 			lvgl_mutex_unlock(); // 解锁
 		}
 	} else lv_obj_scroll_to_y(main_panel, y, LV_ANIM_ON);
+}
+
+// 隐藏 拼音输入框 相关 (默认加锁)
+void hide_pinyin(bool lock = 1) {
+	if (!typing_pinyin) return;
+	if (lock) {
+		if (lvgl_mux_lock()) { // 上锁
+			lv_obj_add_flag(candidate_l, LV_OBJ_FLAG_HIDDEN);
+			lv_obj_add_flag(pinyin_input_l, LV_OBJ_FLAG_HIDDEN);
+			lvgl_mutex_unlock(); // 解锁
+		}
+	} else {
+		lv_obj_add_flag(candidate_l, LV_OBJ_FLAG_HIDDEN);
+		lv_obj_add_flag(pinyin_input_l, LV_OBJ_FLAG_HIDDEN);
+	}
+}
+// 恢复 拼音输入框 相关 (默认加锁)
+void recover_pinyin(bool lock = 1) {
+	if (!typing_pinyin) return;
+	if (lock) {
+		if (lvgl_mux_lock()) { // 上锁
+			lv_obj_clear_flag(candidate_l, LV_OBJ_FLAG_HIDDEN);
+			lv_obj_clear_flag(pinyin_input_l, LV_OBJ_FLAG_HIDDEN);
+			lvgl_mutex_unlock(); // 解锁
+		}
+	} else {
+		lv_obj_clear_flag(candidate_l, LV_OBJ_FLAG_HIDDEN);
+		lv_obj_clear_flag(pinyin_input_l, LV_OBJ_FLAG_HIDDEN);
+	}
 }
 
 // 匹配拼音 -> 词

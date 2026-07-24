@@ -10,12 +10,11 @@
 // 3. 获取API密钥：https://bailian.console.aliyun.com/cn-beijing/?tab=model#/api-key
 #define apiKey "sk-xxxxxxxxxxxxxxxx"
 
-// ##################### [选填] 修改为 键盘的 BLE MAC ################################
+// ##################### 修改为 键盘的 BLE MAC ################################
 // !!!!! 是 蓝牙(BLE) MAC, 不是WiFi MAC !!!!!
 #define BLE_PEER_MAC "00:00:00:00:00:00"
 #define BLE_ROLE     BLETextLink::MASTER
-// 也可 BLETextLink::AUTO 或 BLETextLink::SLAVE
-// AUTO 模式: 由 MAC 字典序自动决定主从
+#define BLE_NAME     "ESP-Edge"
 
 // ######################## 修改为自己的 讯飞STT API密钥 ################################
 
