@@ -14,7 +14,7 @@ SemaphoreHandle_t lvgl_mutex = xSemaphoreCreateRecursiveMutex();
 SemaphoreHandle_t spi_mux = xSemaphoreCreateRecursiveMutex();
 
 bool lvgl_mux_lock() { return xSemaphoreTakeRecursive(lvgl_mutex, portMAX_DELAY) == pdTRUE; }
-void lvgl_mutex_unlock() { xSemaphoreGiveRecursive(lvgl_mutex); }
+void lvgl_mux_unlock() { xSemaphoreGiveRecursive(lvgl_mutex); }
 bool spi_mux_lock() { return xSemaphoreTakeRecursive(spi_mux, portMAX_DELAY) == pdTRUE; }
 void spi_mux_unlock() { xSemaphoreGiveRecursive(spi_mux); }
 
@@ -50,6 +50,10 @@ IN_PSRAM lv_obj_t * main_panel;
 IN_PSRAM lv_obj_t * main_label;
 IN_PSRAM lv_obj_t * ta;
 IN_PSRAM lv_obj_t * kb;
+
+IN_PSRAM lv_obj_t * camera_img; // 摄像头画面 显示框
+IN_PSRAM camera_fb_t *pic;
+IN_PSRAM lv_img_dsc_t img_dsc;
 
 // ##################### 录音 与 Qwen-ASR #####################
 
@@ -345,9 +349,9 @@ void setupI2S() {
 	};
 
 	err = i2s_driver_install(I2S_PORT, &i2s_config, 0, NULL);
+	// err = i2s_driver_uninstall(I2S_PORT);
 	if (err != ESP_OK) {
 		Serial.printf("I2S driver install failed (I2S_PORT): %d\r\n", err);
-		while (true);
 	}
 	
 	const i2s_pin_config_t pin_config = {
@@ -363,11 +367,29 @@ void setupI2S() {
 		while (true);
 	}
 	err = i2s_start(I2S_PORT);
+	// err = i2s_stop(I2S_PORT);
 	if (err != ESP_OK) {
 		Serial.printf("I2S start failed (I2S_PORT): %d\r\n", err);
-		while (true);
 	}
 	Serial.println("OK!");
+}
+// 停止 I2S
+void stopI2S() {
+	Serial.print("Stop I2S ... ");
+	esp_err_t err;
+
+	// err = i2s_start(I2S_PORT);
+	err = i2s_stop(I2S_PORT);
+	if (err != ESP_OK) {
+		Serial.printf("I2S stop failed (I2S_PORT): %d\r\n", err);
+	}
+	Serial.println("OK!");
+	
+	// err = i2s_driver_install(I2S_PORT, &i2s_config, 0, NULL);
+	err = i2s_driver_uninstall(I2S_PORT);
+	if (err != ESP_OK) {
+		Serial.printf("I2S driver uninstall failed, I2S_PORT: %d\r\n", err);
+	}
 }
 
 // 创建 WAV 头
@@ -393,7 +415,7 @@ void generate_wav_header(char* wav_header, uint32_t wav_size, uint32_t sample_ra
 }
 
 // 录音 PCM 音频 (需手动 释放pcm_data)
-void record_pcm(const char *record_key) {
+bool record_pcm(const char *record_key) {
 	bytes_read = 0;
 	recordingSize = 0;
 	
@@ -402,7 +424,7 @@ void record_pcm(const char *record_key) {
 	if (!pcm_data) {
 		Serial.println("无法从 PSRAM 给 pcm_data 分配内存");
 		main_label_add_text("无法从 PSRAM 给 pcm_data 分配内存");
-		return;
+		return 1;
 	}
 	
 	uint32_t start_time = millis();
@@ -410,6 +432,7 @@ void record_pcm(const char *record_key) {
 	while (recordingSize < MAX_RECORD_TIME_SECONDS * SAMPLE_RATE) {
 		esp_err_t err = i2s_read(I2S_PORT, pcm_data + recordingSize, CHUNK_SIZE * sizeof(uint16_t), &bytes_read, portMAX_DELAY);
 		if (err != ESP_OK) continue;
+		else Serial.println("I2S Read fail: 0x" + String(err, 16));
 		recordingSize += bytes_read / 2;
 
 		if (millis() - start_time > Check_Interval) { // 每 Check_Interval 检查一次是否松开录音按钮
@@ -417,6 +440,7 @@ void record_pcm(const char *record_key) {
 			if (read_key() != record_key) break;
 		}
 	}
+	return 0;
 }
 
 // 录制 WAV 文件
@@ -424,7 +448,11 @@ void record_wav(const char *record_key) {
 	Serial.print("[WAV] 录音中 ... ");
 	main_label_set_text("[WAV] 录音中 ... ");
 	
-	record_pcm(record_key);
+	if (record_pcm(record_key)) {
+		Serial.println("录音失败");
+		main_label_add_text("#df1f1f 录音失败 #");
+		return;
+	}
 	Serial.print("OK\r\n");
 	main_label_add_text("OK\r\n");
 
@@ -581,7 +609,7 @@ void ws_callback(websockets::WebsocketsMessage message) {
 		if (asr_text.length() > 0) {
 			if (lvgl_mux_lock()) { // 上锁
 				lv_textarea_add_text(ta, asr_text.c_str());
-				lvgl_mutex_unlock(); // 解锁
+				lvgl_mux_unlock(); // 解锁
 			}
 		}
 		client.cleanup();
@@ -615,9 +643,23 @@ void run_asr(const char *record_key) {
 	Serial.print("[ASR] 录音中 ... ");
 	main_label_set_text("[ASR] 录音中 ... ");
 	
-	record_pcm(record_key);
-	Serial.println("OK");
+	if (record_pcm(record_key)) {
+		Serial.println("录音失败");
+		main_label_add_text("#df1f1f 录音失败 #");
+		return;
+	}
 	
+	if (connecting_wifi) {
+		Serial.println("正在连接 WiFi");
+		main_label_set_text("#b9450f 正在连接 WiFi #");
+		return;
+	}
+	if (WiFi.status() != WL_CONNECTED) {
+		Serial.println("未连接 WiFi");
+		main_label_set_text("#e31919 未连接 WiFi #");
+		return;
+	}
+
 	main_label_set_text("ASR 识别中");
 	// 发送音频到Qwen-ASR进行识别
 	asr_send(pcm_data, recordingSize);
@@ -946,14 +988,14 @@ void my_print(const char *buf) {
 void ta_add_text(const char* text) {
 	if (lvgl_mux_lock()) {  // 加锁
 		lv_textarea_add_text(ta, text);
-		lvgl_mutex_unlock();  // 解锁
+		lvgl_mux_unlock();  // 解锁
 	}
 }
 // 设置 ta 上的文本
 void ta_set_text(const char* text) {
 	if (lvgl_mux_lock()) {  // 加锁
 		lv_textarea_set_text(ta, text);
-		lvgl_mutex_unlock();  // 解锁
+		lvgl_mux_unlock();  // 解锁
 	}
 }
 // 暂存 ta 上的文本
@@ -961,7 +1003,7 @@ void ta_tmp_save() {
 	if (lvgl_mux_lock()) { // 上锁
 		current_window.ta_text_save = lv_textarea_get_text(ta);
 		current_window.ta_pos = lv_textarea_get_cursor_pos(ta);
-		lvgl_mutex_unlock(); // 解锁
+		lvgl_mux_unlock(); // 解锁
 	}
 }
 // 恢复 ta 上的文本
@@ -969,7 +1011,7 @@ void ta_tmp_recover() {
 	if (lvgl_mux_lock()) { // 上锁
 		lv_textarea_set_text(ta, current_window.ta_text_save.c_str());
 		lv_textarea_set_cursor_pos(ta, current_window.ta_pos);
-		lvgl_mutex_unlock(); // 解锁
+		lvgl_mux_unlock(); // 解锁
 	}
 }
 // 在 ta 上临时显示文本
@@ -978,7 +1020,7 @@ void ta_tmp_show(const char* text, uint16_t delay_ms = 700) {
 		current_window.ta_text_save = lv_textarea_get_text(ta);
 		current_window.ta_pos = lv_textarea_get_cursor_pos(ta);
 		lv_textarea_set_text(ta, text);
-		lvgl_mutex_unlock(); // 解锁
+		lvgl_mux_unlock(); // 解锁
 	}
 
 	vTaskDelay(delay_ms / portTICK_PERIOD_MS);
@@ -986,7 +1028,7 @@ void ta_tmp_show(const char* text, uint16_t delay_ms = 700) {
 	ta_set_text(current_window.ta_text_save.c_str());
 	if (lvgl_mux_lock()) { // 上锁
 		lv_textarea_set_cursor_pos(ta, current_window.ta_pos);
-		lvgl_mutex_unlock(); // 解锁
+		lvgl_mux_unlock(); // 解锁
 	}
 }
 
@@ -997,14 +1039,14 @@ void main_label_add_text(const char* text) {
 	main_label_text_tmp += text;
 	if (lvgl_mux_lock()) { // 上锁
 		lv_label_set_text(main_label, main_label_text_tmp.c_str());
-		lvgl_mutex_unlock();
+		lvgl_mux_unlock();
 	}
 }
 // 设置 main_label 上的文本
 void main_label_set_text(const char* text) {
 	if (lvgl_mux_lock()) { // 上锁
 		lv_label_set_text(main_label, text);
-		lvgl_mutex_unlock();
+		lvgl_mux_unlock();
 	}
 }
 // 暂存 main_label 上的文本
@@ -1013,7 +1055,7 @@ void main_label_tmp_save() {
 		current_window.main_label_text_save = lv_label_get_text(main_label);
 		current_window.main_label_pos = lv_obj_get_scroll_y(main_panel);
 		Serial.println(current_window.main_label_pos);
-		lvgl_mutex_unlock(); // 解锁
+		lvgl_mux_unlock(); // 解锁
 	}
 }
 // 恢复 main_label 上的文本
@@ -1022,7 +1064,7 @@ void main_label_tmp_recover() {
 		lv_label_set_text(main_label, current_window.main_label_text_save.c_str());
 		lv_obj_scroll_to_y(main_panel, current_window.main_label_pos, LV_ANIM_ON);
 		Serial.println(current_window.main_label_pos);
-		lvgl_mutex_unlock(); // 解锁
+		lvgl_mux_unlock(); // 解锁
 	}
 }
 // 在 main_label 上临时显示文本
@@ -1032,7 +1074,7 @@ void main_label_tmp_show(const char* text, uint16_t delay_ms = 700) {
 		current_window.main_label_pos = lv_obj_get_scroll_y(main_panel);
 		Serial.println(current_window.main_label_pos);
 		lv_label_set_text(main_label, text);
-		lvgl_mutex_unlock(); // 解锁
+		lvgl_mux_unlock(); // 解锁
 	}
 
 	vTaskDelay(delay_ms / portTICK_PERIOD_MS);
@@ -1041,7 +1083,7 @@ void main_label_tmp_show(const char* text, uint16_t delay_ms = 700) {
 		lv_label_set_text(main_label, current_window.main_label_text_save.c_str());
 		lv_obj_scroll_to_y(main_panel, current_window.main_label_pos, LV_ANIM_ON);
 		Serial.println(current_window.main_label_pos);
-		lvgl_mutex_unlock(); // 解锁
+		lvgl_mux_unlock(); // 解锁
 	}
 }
 
@@ -1050,19 +1092,54 @@ void scroll_main_p(int16_t y = 0, bool lock = 1) {
 	if (lock) {
 		if (lvgl_mux_lock()) { // 上锁
 			lv_obj_scroll_to_y(main_panel, y, LV_ANIM_ON);
-			lvgl_mutex_unlock(); // 解锁
+			lv_obj_update_layout(main_panel);
+			lvgl_mux_unlock(); // 解锁
 		}
-	} else lv_obj_scroll_to_y(main_panel, y, LV_ANIM_ON);
+	} else {
+		lv_obj_scroll_to_y(main_panel, y, LV_ANIM_ON);
+		lv_obj_update_layout(main_panel);
+	}
 }
 
-// 隐藏 拼音输入框 相关 (默认加锁)
+// 隐藏 所有对话相关 组件 (默认加锁)
+void hide_all_dialog_components(bool lock = 1) {
+	if (lock) {
+		if (lvgl_mux_lock()) { // 上锁
+			lv_obj_add_flag(ta, LV_OBJ_FLAG_HIDDEN);
+			lv_obj_add_flag(main_panel, LV_OBJ_FLAG_HIDDEN);
+			hide_pinyin(0);
+			lvgl_mux_unlock(); // 解锁
+		}
+	} else {
+		lv_obj_add_flag(ta, LV_OBJ_FLAG_HIDDEN);
+		lv_obj_add_flag(main_panel, LV_OBJ_FLAG_HIDDEN);
+		hide_pinyin(0);
+	}
+}
+// 显示 所有对话相关 组件 (默认加锁)
+void recover_all_dialog_components(bool lock = 1) {
+	if (lock) {
+		if (lvgl_mux_lock()) { // 上锁
+			lv_obj_clear_flag(ta, LV_OBJ_FLAG_HIDDEN);
+			lv_obj_clear_flag(main_panel, LV_OBJ_FLAG_HIDDEN);
+			recover_pinyin(0);
+			lvgl_mux_unlock(); // 解锁
+		}
+	} else {
+		lv_obj_clear_flag(ta, LV_OBJ_FLAG_HIDDEN);
+		lv_obj_clear_flag(main_panel, LV_OBJ_FLAG_HIDDEN);
+		recover_pinyin(0);
+	}
+}
+
+// 隐藏 拼音输入 相关 (默认加锁)
 void hide_pinyin(bool lock = 1) {
 	if (!typing_pinyin) return;
 	if (lock) {
 		if (lvgl_mux_lock()) { // 上锁
 			lv_obj_add_flag(candidate_l, LV_OBJ_FLAG_HIDDEN);
 			lv_obj_add_flag(pinyin_input_l, LV_OBJ_FLAG_HIDDEN);
-			lvgl_mutex_unlock(); // 解锁
+			lvgl_mux_unlock(); // 解锁
 		}
 	} else {
 		lv_obj_add_flag(candidate_l, LV_OBJ_FLAG_HIDDEN);
@@ -1076,7 +1153,7 @@ void recover_pinyin(bool lock = 1) {
 		if (lvgl_mux_lock()) { // 上锁
 			lv_obj_clear_flag(candidate_l, LV_OBJ_FLAG_HIDDEN);
 			lv_obj_clear_flag(pinyin_input_l, LV_OBJ_FLAG_HIDDEN);
-			lvgl_mutex_unlock(); // 解锁
+			lvgl_mux_unlock(); // 解锁
 		}
 	} else {
 		lv_obj_clear_flag(candidate_l, LV_OBJ_FLAG_HIDDEN);
@@ -1155,7 +1232,7 @@ void update_candidate() {
 		Serial.println("匹配结果为空");
 		if (lvgl_mux_lock()) {  // 上锁
 			lv_label_set_text(candidate_l, "");
-			lvgl_mutex_unlock(); // 解锁
+			lvgl_mux_unlock(); // 解锁
 		}
 		return;
 	}
@@ -1165,7 +1242,7 @@ void update_candidate() {
 	}
 	if (lvgl_mux_lock()) {  // 上锁
 		lv_label_set_text(candidate_l, candidate_str.c_str());
-		lvgl_mutex_unlock(); // 解锁
+		lvgl_mux_unlock(); // 解锁
 	}
 }
 
@@ -1183,7 +1260,7 @@ void proc_other_input_key() {
 		pinyin_str += proc_key;
 		if (lvgl_mux_lock()) { // 上锁
 			lv_label_set_text(pinyin_input_l, pinyin_str.c_str());
-			lvgl_mutex_unlock(); // 解锁
+			lvgl_mux_unlock(); // 解锁
 		}
 		update_word_match();
 	}
@@ -1193,7 +1270,7 @@ void proc_other_input_key() {
 			if (lvgl_mux_lock()) { // 上锁
 				lv_textarea_add_text(ta, word_result[ proc_key.toInt() + candidate_offset - 1 ].c_str());
 				clear_pinyin();
-				lvgl_mutex_unlock(); // 解锁
+				lvgl_mux_unlock(); // 解锁
 			}
 		}
 		
@@ -1204,7 +1281,7 @@ void proc_other_input_key() {
 			lv_textarea_add_text(ta, lv_label_get_text(pinyin_input_l));
 			clear_pinyin();
 
-			lvgl_mutex_unlock(); // 解锁
+			lvgl_mux_unlock(); // 解锁
 		}
 	}
 	// 拼音输入下的 [ -> offset-MOVE_WORDS (右移 MOVE_WORDS 项)
@@ -1235,7 +1312,7 @@ void my_read_imu() {
 
     if (lvgl_mux_lock()) { // 上锁
 		lv_obj_scroll_by_bounded(main_panel, 0, 0-accelData.accelY*SCROLL_MULTI, LV_ANIM_ON);
-		lvgl_mutex_unlock();
+		lvgl_mux_unlock();
 	}
 
     // touchpad_x -= accelData.accelX * 8;
@@ -1286,7 +1363,7 @@ void send_key_to_ta(uint32_t key) {
 				lv_event_send(ta, LV_EVENT_KEY, &key);
 			} else Serial.println("send_key_to_ta: kb is NULL!");
 			
-			lvgl_mutex_unlock();
+			lvgl_mux_unlock();
 		}
 	} else Serial.println("send_key_to_ta: ta is NULL!");
 }
@@ -1305,6 +1382,94 @@ void send_key_to_ta(uint32_t key) {
 // }
 
 
+// 初始化 摄像头
+void init_camera() {
+	camera_config_t config;
+	config.ledc_channel = LEDC_CHANNEL_7; // 尽可能 避开 其他功能已使用的
+	config.ledc_timer   = LEDC_TIMER_3;   // 尽可能 避开 其他功能已使用的
+	config.pin_d0 = Y2_GPIO_NUM;
+	config.pin_d1 = Y3_GPIO_NUM;
+	config.pin_d2 = Y4_GPIO_NUM;
+	config.pin_d3 = Y5_GPIO_NUM;
+	config.pin_d4 = Y6_GPIO_NUM;
+	config.pin_d5 = Y7_GPIO_NUM;
+	config.pin_d6 = Y8_GPIO_NUM;
+	config.pin_d7 = Y9_GPIO_NUM;
+	config.pin_xclk   = XCLK_GPIO_NUM;
+	config.pin_pclk   = PCLK_GPIO_NUM;
+	config.pin_vsync  = VSYNC_GPIO_NUM;
+	config.pin_href   = HREF_GPIO_NUM;
+	config.pin_sccb_sda = SIOD_GPIO_NUM;
+	config.pin_sccb_scl = SIOC_GPIO_NUM;
+	config.pin_pwdn   = PWDN_GPIO_NUM;
+	config.pin_reset  = RESET_GPIO_NUM;
+	config.xclk_freq_hz = 24000000;
+	// config.xclk_freq_hz = 26400000; // 超频极限
+	// config.frame_size = FRAMESIZE_HVGA;
+	config.frame_size   = FRAMESIZE_QVGA;
+	config.pixel_format = PIXFORMAT_RGB565;  // for face detection/recognition
+	// config.pixel_format = PIXFORMAT_JPEG; // for streaming
+	config.grab_mode   = CAMERA_GRAB_WHEN_EMPTY;
+	config.fb_location = CAMERA_FB_IN_PSRAM;
+	config.jpeg_quality = 6;
+	config.fb_count = 1;
+
+	esp_err_t err = esp_camera_init(&config);
+	if (err != ESP_OK) {
+		Serial.printf("Camera init failed with error 0x%x", err);
+		return;
+	}
+
+	// sensor_t * s = esp_camera_sensor_get();
+	// s->set_hmirror(s, 1);
+	// s->set_vflip(s, 1);
+
+	img_dsc.header.always_zero = 0;
+	img_dsc.header.w = 480;
+	img_dsc.header.h = 320;
+	img_dsc.data_size = 320 * 480 * 2;
+	// img_dsc.header.w = 320;
+	// img_dsc.header.h = 240;
+	// img_dsc.data_size = 240 * 320 * 2;
+	img_dsc.header.cf = LV_IMG_CF_TRUE_COLOR;
+	img_dsc.data = NULL;
+
+	// lv_img_set_src(img_camera, &pic);
+}
+// 反初始化 摄像头
+void deinit_camera() {
+	esp_err_t err = esp_camera_deinit();
+	if (err != ESP_OK) {
+		Serial.printf("Camera deinit failed with error 0x%x", err);
+		return;
+	}
+}
+
+void camera_loop() {
+	uint64_t start_time = millis();
+	while (1) {
+		// esp_task_wdt_reset();
+		pic = esp_camera_fb_get();
+
+		if (NULL != pic) {
+			img_dsc.data = pic->buf;
+			if (lvgl_mux_lock()) {
+				lv_img_set_src(camera_img, &img_dsc);
+				lvgl_mux_unlock();
+			}
+		}
+		esp_camera_fb_return(pic);
+		// vTaskDelay(1 / portTICK_PERIOD_MS);
+
+		if (millis() - start_time > 150) {
+			if (read_key() != "$12") {
+				start_time = millis();
+				vTaskDelay(1 / portTICK_PERIOD_MS);
+			} else break;
+		}
+	}
+}
+
 
 // ############################### 网络 ##################################
 
@@ -1312,8 +1477,10 @@ void send_key_to_ta(uint32_t key) {
 void onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
     switch (event) {
         case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
-            Serial.printf("WiFi断开（原因码: %d）,正在尝试自动重连...", info.wifi_sta_disconnected.reason);
-            // isConnected = false; // 标记需要重连
+			Serial.printf(("WiFi已断开, 原因码: " + String(info.wifi_sta_disconnected.reason) + ")").c_str());
+			ta_tmp_show(("#be203a WiFi已断开, 原因码: " + String(info.wifi_sta_disconnected.reason) + ")#").c_str());
+
+            // Serial.printf("WiFi断开（原因码: %d）, 正在尝试自动重连...", info.wifi_sta_disconnected.reason);
             break;
         default:
             break;

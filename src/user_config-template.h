@@ -37,5 +37,24 @@ const char* passwords[] = {"", // 索引从1开始, 0留空
 };
 
 // ##########################################################################
+// 摄像头 相关配置
+
+#define PWDN_GPIO_NUM  17   // power down is not used
+#define RESET_GPIO_NUM -1  // software reset will be performed
+#define XCLK_GPIO_NUM   8
+#define SIOD_GPIO_NUM  21
+#define SIOC_GPIO_NUM  16
+
+#define Y9_GPIO_NUM   2
+#define Y8_GPIO_NUM   7
+#define Y7_GPIO_NUM  10
+#define Y6_GPIO_NUM  14
+#define Y5_GPIO_NUM  11
+#define Y4_GPIO_NUM  15
+#define Y3_GPIO_NUM  13
+#define Y2_GPIO_NUM  12
+#define VSYNC_GPIO_NUM 6
+#define HREF_GPIO_NUM  4
+#define PCLK_GPIO_NUM  9
 
 

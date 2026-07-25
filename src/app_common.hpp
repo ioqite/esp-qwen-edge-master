@@ -23,6 +23,7 @@
 #include <Wire.h>
 // LCD 相关
 #include <Arduino_GFX_Library.h>
+#include "esp_camera.h"
 #include <lvgl.h>
 // #include <examples/lv_examples.h>
 // #include <demos/lv_demos.h>
@@ -204,6 +205,17 @@ void main_label_tmp_show(const char* text, uint16_t delay_ms);
 // 滚动 主文本框 (Y默认0) (默认加锁)
 void scroll_main_p(int16_t y, bool lock);
 
+// 隐藏 所有对话相关 组件 (默认加锁)
+void hide_all_dialog_components(bool lock);
+// 显示 所有对话相关 组件 (默认加锁)
+void recover_all_dialog_components(bool lock);
+
+// 隐藏 拼音输入 相关 (默认加锁)
+void hide_pinyin(bool lock);
+// 恢复 拼音输入框 相关 (默认加锁)
+void recover_pinyin(bool lock);
+
+
 // // 鼠标回调
 // void my_input_read(lv_indev_drv_t * drv, lv_indev_data_t*data);
 
@@ -257,6 +269,8 @@ void reset_chat_history();
 // 初始化 I2S
 void setupI2S();
 
+bool record_pcm(const char *record_key);
+
 // ################## 其他 ###################
 
 // 检查是否有按键按下 并 读取, 无->"", 有->按下的按键
@@ -290,4 +304,10 @@ void update_word_match();
 // 限制: 在处理 耗时较长的任务[等待结果，录音时]时, 无法执行
 void core0_loop_func();
 
+// 初始化 摄像头
+void init_camera();
+// 反初始化 摄像头
+void deinit_camera();
 
+// 摄像头循环
+void camera_loop();

@@ -10,7 +10,7 @@ void my_loop(void *param) {
 
 	if (lvgl_mux_lock()) { // 上锁
 		lv_textarea_set_placeholder_text(ta, "请输入");
-		lvgl_mutex_unlock(); // 解锁
+		lvgl_mux_unlock(); // 解锁
 	}
 
 	// 初始化 SD 卡
@@ -48,14 +48,14 @@ void my_loop(void *param) {
 					lv_obj_add_flag(candidate_l, LV_OBJ_FLAG_HIDDEN);
 					lv_obj_add_flag(pinyin_input_l, LV_OBJ_FLAG_HIDDEN);
 					clear_pinyin();
-					lvgl_mutex_unlock(); // 解锁
+					lvgl_mux_unlock(); // 解锁
 				}
 				user_prompt = lv_textarea_get_text(ta);
 				if (!user_prompt.startsWith("-scr")) {
 					scroll_main_p(0, 0);
 				}
 
-				lvgl_mutex_unlock(); // 解锁
+				lvgl_mux_unlock(); // 解锁
 			}
 
 			if (!user_prompt.startsWith("-scr")) {
@@ -87,7 +87,7 @@ void my_loop(void *param) {
 				lv_label_set_text(main_label, current_window.main_label_text_save.c_str());
 				lv_obj_scroll_to_y(main_panel, current_window.main_label_pos, LV_ANIM_ON);
 				Serial.println(current_window.main_label_pos);
-				lvgl_mutex_unlock(); // 解锁
+				lvgl_mux_unlock(); // 解锁
 			}
 
 			vTaskDelay(700 / portTICK_PERIOD_MS);
@@ -104,7 +104,7 @@ void my_loop(void *param) {
 					lv_label_set_text(pinyin_input_l, pinyin_str.c_str());
 					if (!pinyin_str.length()) clear_pinyin(); // pinyin_str为空，清空所有变量
 					
-					lvgl_mutex_unlock(); // 解锁
+					lvgl_mux_unlock(); // 解锁
 				}
 				if (pinyin_str.length()) update_word_match();
 			} else { // 正常输入模式
@@ -118,7 +118,7 @@ void my_loop(void *param) {
 					lv_textarea_add_text(ta, lv_label_get_text(pinyin_input_l));
 					clear_pinyin();
 
-					lvgl_mutex_unlock(); // 解锁
+					lvgl_mux_unlock(); // 解锁
 				}
 			} else { // 正常输入模式
 				send_key_to_ta(LV_KEY_ENTER);
@@ -163,7 +163,7 @@ void my_loop(void *param) {
 					lv_obj_add_flag(pinyin_input_l, LV_OBJ_FLAG_HIDDEN);
 					clear_pinyin();
 				}
-				lvgl_mutex_unlock(); // 解锁
+				lvgl_mux_unlock(); // 解锁
 			}
 		/* 拼音预处理 */}else if (proc_key == "&S1") {
 			ta_tmp_show((use_proc = !use_proc) ? "拼音预处理: 1" : "拼音预处理: 0");
@@ -319,7 +319,7 @@ void getAnswer(String& _user_prompt) {
 	}
 	// 读取 SD卡
 	if (_user_prompt.startsWith("-sd")) {
-		if (sd_status != nullptr) {
+		if (sd_status != "") {
 			answer = sd_status;
 			return; // 如有错误 则返回错误原因
 		}
@@ -443,6 +443,24 @@ void getAnswer(String& _user_prompt) {
 		scroll_main_p(scroll_to);
 		answer = ""; return;
 	}
+	if (_user_prompt == "-cam") {
+		stopI2S();
+		init_camera();
+		if (lvgl_mux_lock()) { // 上锁
+			lv_obj_clear_flag(camera_img, LV_OBJ_FLAG_HIDDEN);
+			hide_all_dialog_components(0);
+			lvgl_mux_unlock(); // 解锁
+		}
+		camera_loop();
+		if (lvgl_mux_lock()) { // 上锁
+			lv_obj_add_flag(camera_img, LV_OBJ_FLAG_HIDDEN);
+			recover_all_dialog_components(0);
+			lvgl_mux_unlock(); // 解锁
+		}
+		deinit_camera();
+		setupI2S();
+		answer = "#db6319 已停止刷新 #"; return;
+	}
 
 	// 快捷文本
 	if (_user_prompt == "-t-1") { answer = ""; return; }
@@ -495,7 +513,7 @@ void getAnswer(String& _user_prompt) {
 void loop() {
 	if (lvgl_mux_lock()) { // 上锁
 		lv_timer_handler(); // LVGL任务处理
-		lvgl_mutex_unlock();
+		lvgl_mux_unlock(); // 解锁
 	}
 
 // 	if (spi_mux_lock()) {   // 加锁
@@ -699,6 +717,18 @@ void setup() {
 	lv_obj_align_to(candidate_l, pinyin_input_l, LV_ALIGN_OUT_BOTTOM_MID, 0, -2);
 	lv_obj_add_style(candidate_l, &style_pinyin, LV_STATE_DEFAULT);
 	lv_label_set_text(candidate_l, "");
+
+	// 创建 相机实时显示区 (隐藏)
+	camera_img = lv_img_create(lv_scr_act());
+	lv_obj_add_flag(camera_img, LV_OBJ_FLAG_HIDDEN);
+	// lv_obj_set_size(camera_img, 240, 240);
+	lv_obj_align(camera_img, LV_ALIGN_CENTER, 0, 0);  // 居中显示
+	lv_obj_set_pos(camera_img, -1, 0);
+	lv_obj_set_scroll_dir(lv_scr_act(), LV_DIR_NONE);
+	lv_obj_set_style_pad_top   (camera_img, 0, LV_PART_MAIN);
+	lv_obj_set_style_pad_bottom(camera_img, 0, LV_PART_MAIN);
+	lv_obj_set_style_pad_left  (camera_img, 0, LV_PART_MAIN);
+	lv_obj_set_style_pad_right (camera_img, 0, LV_PART_MAIN);
 	
 	xTaskCreatePinnedToCore(
 		my_loop,     // 任务函数
