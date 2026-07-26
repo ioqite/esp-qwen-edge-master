@@ -1417,7 +1417,7 @@ void init_camera() {
 	config.grab_mode   = CAMERA_GRAB_WHEN_EMPTY;
 	config.fb_location = CAMERA_FB_IN_PSRAM;
 	config.jpeg_quality = 6;
-	config.fb_count = 1;
+	config.fb_count = 2;
 
 	esp_err_t err = esp_camera_init(&config);
 	if (err != ESP_OK) {
@@ -1426,9 +1426,9 @@ void init_camera() {
 	}
 
 	sensor_t * s = esp_camera_sensor_get();
-	s->set_hmirror(s, 1);
-	s->set_vflip(s, 1);
-	s->set_denoise(s, 1);
+	// s->set_hmirror(s, 1);
+	// s->set_vflip(s, 1);
+	s->set_denoise(s, 3);
 }
 // 反初始化 摄像头
 void deinit_camera() {
