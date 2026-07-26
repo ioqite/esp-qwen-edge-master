@@ -52,8 +52,6 @@ IN_PSRAM lv_obj_t * ta;
 IN_PSRAM lv_obj_t * kb;
 
 IN_PSRAM lv_obj_t * camera_img; // 摄像头画面 显示框
-IN_PSRAM camera_fb_t *pic;
-IN_PSRAM lv_img_dsc_t img_dsc;
 
 // ##################### 录音 与 Qwen-ASR #####################
 
@@ -419,6 +417,8 @@ bool record_pcm(const char *record_key) {
 	bytes_read = 0;
 	recordingSize = 0;
 	
+	setupI2S();
+
 	// 分配 pcm_data
 	pcm_data = (uint16_t *)ps_malloc(BUFFER_SIZE * sizeof(uint16_t));
 	if (!pcm_data) {
@@ -431,8 +431,10 @@ bool record_pcm(const char *record_key) {
 	// 开始循环录音
 	while (recordingSize < MAX_RECORD_TIME_SECONDS * SAMPLE_RATE) {
 		esp_err_t err = i2s_read(I2S_PORT, pcm_data + recordingSize, CHUNK_SIZE * sizeof(uint16_t), &bytes_read, portMAX_DELAY);
-		if (err != ESP_OK) continue;
-		else Serial.println("I2S Read fail: 0x" + String(err, 16));
+		if (err != ESP_OK) {
+			Serial.println("I2S Read fail: 0x" + String(err, 16));
+			continue;
+		}
 		recordingSize += bytes_read / 2;
 
 		if (millis() - start_time > Check_Interval) { // 每 Check_Interval 检查一次是否松开录音按钮
@@ -440,6 +442,7 @@ bool record_pcm(const char *record_key) {
 			if (read_key() != record_key) break;
 		}
 	}
+	stopI2S();
 	return 0;
 }
 
@@ -1385,6 +1388,8 @@ void send_key_to_ta(uint32_t key) {
 // 初始化 摄像头
 void init_camera() {
 	camera_config_t config;
+	// config.ledc_channel = LEDC_CHANNEL_0;
+	// config.ledc_timer = LEDC_TIMER_1;
 	config.ledc_channel = LEDC_CHANNEL_7; // 尽可能 避开 其他功能已使用的
 	config.ledc_timer   = LEDC_TIMER_3;   // 尽可能 避开 其他功能已使用的
 	config.pin_d0 = Y2_GPIO_NUM;
@@ -1404,8 +1409,8 @@ void init_camera() {
 	config.pin_pwdn   = PWDN_GPIO_NUM;
 	config.pin_reset  = RESET_GPIO_NUM;
 	config.xclk_freq_hz = 24000000;
-	// config.xclk_freq_hz = 26400000; // 超频极限
-	// config.frame_size = FRAMESIZE_HVGA;
+	// config.xclk_freq_hz = 26400000;
+	// config.frame_size = FRAMESIZE_240X240;
 	config.frame_size   = FRAMESIZE_QVGA;
 	config.pixel_format = PIXFORMAT_RGB565;  // for face detection/recognition
 	// config.pixel_format = PIXFORMAT_JPEG; // for streaming
@@ -1420,21 +1425,10 @@ void init_camera() {
 		return;
 	}
 
-	// sensor_t * s = esp_camera_sensor_get();
-	// s->set_hmirror(s, 1);
-	// s->set_vflip(s, 1);
-
-	img_dsc.header.always_zero = 0;
-	img_dsc.header.w = 480;
-	img_dsc.header.h = 320;
-	img_dsc.data_size = 320 * 480 * 2;
-	// img_dsc.header.w = 320;
-	// img_dsc.header.h = 240;
-	// img_dsc.data_size = 240 * 320 * 2;
-	img_dsc.header.cf = LV_IMG_CF_TRUE_COLOR;
-	img_dsc.data = NULL;
-
-	// lv_img_set_src(img_camera, &pic);
+	sensor_t * s = esp_camera_sensor_get();
+	s->set_hmirror(s, 1);
+	s->set_vflip(s, 1);
+	s->set_denoise(s, 1);
 }
 // 反初始化 摄像头
 void deinit_camera() {
@@ -1446,27 +1440,41 @@ void deinit_camera() {
 }
 
 void camera_loop() {
+	camera_fb_t *pic;
+	lv_img_dsc_t img_dsc;
+	img_dsc.header.always_zero = 0;
+	// img_dsc.header.w = 480;
+	// img_dsc.header.h = 320;
+	// img_dsc.data_size = 320 * 480 * 2;
+	// img_dsc.header.w = 240;
+	// img_dsc.header.h = 320;
+	img_dsc.header.w = 320;
+	img_dsc.header.h = 240;
+	img_dsc.data_size = 240 * 320 * 2;
+	img_dsc.header.cf = LV_IMG_CF_TRUE_COLOR;
+	img_dsc.data = NULL;
+	// lv_img_set_src(img_camera, &pic);
+
 	uint64_t start_time = millis();
 	while (1) {
 		// esp_task_wdt_reset();
 		pic = esp_camera_fb_get();
 
-		if (NULL != pic) {
+		if (pic != nullptr && pic->buf != nullptr) {
 			img_dsc.data = pic->buf;
 			if (lvgl_mux_lock()) {
 				lv_img_set_src(camera_img, &img_dsc);
 				lvgl_mux_unlock();
 			}
 		}
-		esp_camera_fb_return(pic);
-		// vTaskDelay(1 / portTICK_PERIOD_MS);
-
 		if (millis() - start_time > 150) {
 			if (read_key() != "$12") {
 				start_time = millis();
-				vTaskDelay(1 / portTICK_PERIOD_MS);
+				// vTaskDelay(1 / portTICK_PERIOD_MS);
 			} else break;
 		}
+		// vTaskDelay(pdMS_TO_TICKS(1));
+		esp_camera_fb_return(pic);
 	}
 }
 

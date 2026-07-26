@@ -268,6 +268,8 @@ void reset_chat_history();
 
 // 初始化 I2S
 void setupI2S();
+// 停止 I2S
+void stopI2S();
 
 bool record_pcm(const char *record_key);
 
@@ -311,3 +313,5 @@ void deinit_camera();
 
 // 摄像头循环
 void camera_loop();
+
+

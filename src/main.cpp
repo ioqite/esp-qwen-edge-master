@@ -17,7 +17,7 @@ void my_loop(void *param) {
 	init_SDcard();
 
 	// 初始化 I2S
-	setupI2S();
+	// setupI2S();
 
 	// 初始化 拼音解码器
 	zh_pinyin_begin();
@@ -444,7 +444,7 @@ void getAnswer(String& _user_prompt) {
 		answer = ""; return;
 	}
 	if (_user_prompt == "-cam") {
-		stopI2S();
+		// stopI2S();
 		init_camera();
 		if (lvgl_mux_lock()) { // 上锁
 			lv_obj_clear_flag(camera_img, LV_OBJ_FLAG_HIDDEN);
@@ -458,7 +458,7 @@ void getAnswer(String& _user_prompt) {
 			lvgl_mux_unlock(); // 解锁
 		}
 		deinit_camera();
-		setupI2S();
+		// setupI2S();
 		answer = "#db6319 已停止刷新 #"; return;
 	}
 
@@ -721,9 +721,8 @@ void setup() {
 	// 创建 相机实时显示区 (隐藏)
 	camera_img = lv_img_create(lv_scr_act());
 	lv_obj_add_flag(camera_img, LV_OBJ_FLAG_HIDDEN);
-	// lv_obj_set_size(camera_img, 240, 240);
+	// lv_img_set_angle(camera_img, 900);
 	lv_obj_align(camera_img, LV_ALIGN_CENTER, 0, 0);  // 居中显示
-	lv_obj_set_pos(camera_img, -1, 0);
 	lv_obj_set_scroll_dir(lv_scr_act(), LV_DIR_NONE);
 	lv_obj_set_style_pad_top   (camera_img, 0, LV_PART_MAIN);
 	lv_obj_set_style_pad_bottom(camera_img, 0, LV_PART_MAIN);
