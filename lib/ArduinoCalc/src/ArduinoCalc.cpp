@@ -27,7 +27,12 @@ CalcValue::~CalcValue() { mbedtls_mpi_free(&mpi_val); }
 CalcValue CalcValue::fromDouble(double d) { CalcValue v; v.type = VT_DOUBLE; v.d_val = d; return v; }
 CalcValue CalcValue::fromMpiStr(const String& s) {
     CalcValue v; v.type = VT_MPI; v.d_val = 0;
-    mbedtls_mpi_read_string(&v.mpi_val, 10, s.c_str());
+    int ret = mbedtls_mpi_read_string(&v.mpi_val, 10, s.c_str());
+    if (ret != 0) {
+        // 解析失败，降级为 double
+        v.type = VT_DOUBLE;
+        v.d_val = s.toDouble();
+    }
     return v;
 }
 
@@ -36,7 +41,12 @@ bool CalcValue::promoteToMpi() {
     if (d_val != floor(d_val) || isinf(d_val) || isnan(d_val)) return false;
     type = VT_MPI;
     char buf[32]; snprintf(buf, sizeof(buf), "%.0f", d_val);
-    mbedtls_mpi_read_string(&mpi_val, 10, buf);
+    int ret = mbedtls_mpi_read_string(&mpi_val, 10, buf);
+    if (ret != 0) {
+        // 解析失败，回退为 double
+        type = VT_DOUBLE;
+        return false;
+    }
     return true;
 }
 
@@ -44,6 +54,7 @@ bool CalcValue::promoteToMpi() {
 double CalcValue::toDouble() const {
     if (type == VT_DOUBLE) return d_val;
     String s = mpiToString(&mpi_val, 10);
+    if (s.length() == 0) return 0.0; // mpiToString 失败时返回 0
     return s.toDouble(); // 超出范围返回 Infinity，属于预期行为
 }
 
@@ -51,16 +62,31 @@ double CalcValue::toDouble() const {
 String CalcValue::mpiToString(const mbedtls_mpi* X, int radix) {
     if (mbedtls_mpi_cmp_int(X, 0) == 0) return "0";
     size_t bits = mbedtls_mpi_bitlen(X);
+    // 真机 mbedtls 的 mbedtls_mpi_write_string 实际需要更大缓冲
+    // 保守估算：每位最坏情况占用 1 字节（10进制：bits*0.30103，但留余量）
+    // +16 是 sign + null + mbedtls 内部余量
     size_t buf_size;
-    if (radix == 2)  buf_size = bits + 4;
-    else if (radix == 8)  buf_size = bits / 3 + 4;
-    else if (radix == 16) buf_size = bits / 4 + 4;
-    else buf_size = bits * 0.31 + 4; // 10进制
-    
+    if (radix == 2)       buf_size = bits + 16;
+    else if (radix == 8)  buf_size = bits / 3 + 16;
+    else if (radix == 16) buf_size = bits / 4 + 16;
+    else                  buf_size = bits * 4 / 10 + 32; // 10进制，多留余量
+
     char* buf = (char*)malloc(buf_size);
     if (!buf) return "[OOM]";
+    buf[0] = '\0';  // 防止 mbedtls_mpi_write_string 失败时读到未初始化数据
     size_t olen = 0;
-    mbedtls_mpi_write_string(X, radix, buf, buf_size, &olen);
+    int ret = mbedtls_mpi_write_string(X, radix, buf, buf_size, &olen);
+    if (ret != 0 || olen == 0) {
+        // 失败时尝试更大缓冲重试一次
+        free(buf);
+        buf_size = buf_size * 2 + 32;
+        buf = (char*)malloc(buf_size);
+        if (!buf) return "[OOM]";
+        buf[0] = '\0';
+        olen = 0;
+        ret = mbedtls_mpi_write_string(X, radix, buf, buf_size, &olen);
+        if (ret != 0 || olen == 0) { free(buf); return "[ERR]"; }
+    }
     String res = String(buf);
     free(buf);
     return res;
@@ -266,7 +292,12 @@ bool ArduinoCalc::evaluateExpression(const String& expr, CalcValue& result, Stri
                     if (digits.length() == 0) { errMsg += "错误: 进制前缀后无有效数字\n"; return false; }
                     // 解析为 mbedtls_mpi，再判断是否需要降为 double
                     CalcValue v; v.type = VT_MPI; v.d_val = 0;
-                    mbedtls_mpi_read_string(&v.mpi_val, radix, digits.c_str());
+                    int rret = mbedtls_mpi_read_string(&v.mpi_val, radix, digits.c_str());
+                    if (rret != 0) {
+                        // 解析失败，降级为 double
+                        v.type = VT_DOUBLE;
+                        v.d_val = (double)strtoull(digits.c_str(), nullptr, radix);
+                    }
                     values.push(v);
                     continue;
                 }
