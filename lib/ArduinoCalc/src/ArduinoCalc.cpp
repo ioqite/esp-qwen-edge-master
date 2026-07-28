@@ -525,16 +525,12 @@ bool ArduinoCalc::calculate(const String& input, double& result, String& errMsg,
             String s_oct = CalcValue::mpiToString(&abs_val, 8);
             mbedtls_mpi_free(&abs_val);
 
-            String sign = (mbedtls_mpi_cmp_int(&finalVal.mpi_val, 0) < 0) ? "-" : "";
+            const char *sign = (mbedtls_mpi_cmp_int(&finalVal.mpi_val, 0) < 0) ? "-" : "";
 
-            // 安全构建：先清空，再 concat，避免 ESP32 String operator= + 链式 + 在堆碎片化时损坏
-            outStr = "";
-            outStr.concat(sign); outStr.concat(s_dec);
-            outStr.concat(" ");
-            outStr.concat(sign); outStr.concat("0x"); outStr.concat(s_hex);
-            outStr.concat(" ");
-            outStr.concat(sign); outStr.concat("0b"); outStr.concat(s_bin);
-            outStr.concat(" ");
+            // 安全构建：concat
+            outStr =      sign;                       outStr.concat(s_dec); outStr.concat("\n");
+            outStr.concat(sign); outStr.concat("0x"); outStr.concat(s_hex); outStr.concat("\n");
+            outStr.concat(sign); outStr.concat("0b"); outStr.concat(s_bin); outStr.concat("\n");
             outStr.concat(sign); outStr.concat("0o"); outStr.concat(s_oct);
         } else {
             long intVal = lround(finalVal.d_val);

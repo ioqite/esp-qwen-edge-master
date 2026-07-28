@@ -524,19 +524,16 @@ void getAnswer(String& _user_prompt) {
         String errMsg, outStr;  // 用于接收 错误信息与输出结果 的字符串
         // bool success = calculate(_user_prompt, result, errMsg);
 		bool success = calc.calculate(_user_prompt, result, errMsg, outStr);
-        Serial.println(result);
-		Serial.println(errMsg);
-		Serial.println(outStr);
 
         if (success) {
             Serial.println("输入: " + _user_prompt);
-            Serial.println("结果: " + String(result, 4)); // 输出结果，保留4位小数
-			answer = "#10b166 结果: #" + String(result, 4);
+            Serial.println("结果: " + outStr);
+			answer = "#10b166 结果:# " + outStr;
         } else {
             // 如果失败，统一输出累积的错误信息
             Serial.println("输入: " + _user_prompt);
             Serial.print(errMsg);
-			answer = errMsg;
+			answer = "#b11010 " + errMsg;
         }
 	} else if (use_proc == 1) {  // 使用 拼音预处理
 		String proced;
@@ -692,16 +689,6 @@ void setup() {
 	print_heap_free("初始化前");
 	
 	hardware_init();  // 硬件 初始化
-	
-	// // 预分配对话历史到PSRAM，降低SRAM碎片化
-	// if (psramFound()) {
-	// 	for (int i = 0; i < MAX_CHAT_WINDOW; i++) {
-	// 		chat_windows[i].chatHistory.reserve(MAX_MESSAGES * 2 + 1);
-	// 	}
-	// 	response.reserve(2048);
-	// 	answer.reserve(2048);
-	// 	proced.reserve(2048);
-	// }
 	
 	// 声明字体
 	LV_FONT_DECLARE(cgr_yuyag_w2_ext4);
