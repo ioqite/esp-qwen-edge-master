@@ -128,6 +128,15 @@ public:
     String peerAddress() const { return _peerAddr; }
     Role   role()        const { return _effectiveRole; }
 
+    // ---------------- 清空接收缓冲 ----------------
+    void clearBuffer()
+    {
+        portENTER_CRITICAL(&_rxMux);
+        _rxHead = 0;
+        _rxTail = 0;
+        portEXIT_CRITICAL(&_rxMux);
+    }
+
     // ====================================================================
     //  loop - 必须在 Arduino loop() 中调用
     //   1. 派发接收消息到用户 onReceive

@@ -298,8 +298,12 @@ void getAnswer(String& _user_prompt) {
 		answer = ""; return;
 	}
 	// 设置 背光亮度
-	if (_user_prompt.startsWith("-bl=")) {
-		bl_duty = _user_prompt.substring(_user_prompt.indexOf("=") + 1).toDouble();
+	if (_user_prompt.startsWith("-bl")) {
+		if (_user_prompt.startsWith("-bl=")) {
+			bl_duty = _user_prompt.substring(_user_prompt.indexOf("=") + 1).toDouble();
+		} else {
+			bl_duty = 55;
+		}
 		set_bl_duty();
 		answer = "背光亮度: " + String(bl_duty); return;
 	}
@@ -461,6 +465,51 @@ void getAnswer(String& _user_prompt) {
 		// setupI2S();
 		answer = "#db6319 已停止刷新 #"; return;
 	}
+	// 归档相关命令
+	if (_user_prompt.startsWith("-ac")) {
+		if (sd_status != "") {
+			answer = sd_status;
+			return; // 如有错误 则返回错误原因
+		}
+
+		answer = "";
+		main_label_tmp_save();
+
+		// -ac -> 先询问 操作类型
+		if (_user_prompt == "-ac") {
+			main_label_set_text("#4c3af0 请输入 操作类型:#\r\n #12bcec 1. 读取存档 # \r\n #10e38b 2. 写入存档 # \r\n #dd1e14 3. 退出 # \r\n");
+			answer = wait_until_read_key();
+			if (answer == "$12" || answer == "q" || answer == "3") {
+				goto ac_exit;
+			}
+		}
+		// -ac-r -> 读取存档
+		if (answer == "1" || _user_prompt == "-ac-r") { 
+			// ...
+		}
+		// -ac-w -> 写入存档
+		if (answer == "2" || _user_prompt == "-ac-w") { 
+			// ...
+		}
+		
+		// 读取 SD卡文件内容
+		if (spi_mux_lock()) {   // 加锁
+			File file = SD.open(SD_PREFIX "text1.txt", FILE_READ);
+			if (file.available()) {
+				answer = "";
+				while (file.available()) answer += (char)file.read();
+				file.close();
+			} else {
+				Serial.printf("无法读取 %s", SD_PREFIX "text1.txt");
+				answer = "#da2727 无法读取 #" SD_PREFIX "text1.txt";
+			}
+			spi_mux_unlock(); // 解锁
+		}
+		goto ac_exit;
+	ac_exit:
+		main_label_tmp_recover();
+		answer = ""; return;
+	}
 
 	// 快捷文本
 	if (_user_prompt == "-t-1") { answer = ""; return; }
@@ -470,10 +519,15 @@ void getAnswer(String& _user_prompt) {
 	Serial.println("_user_prompt: " + _user_prompt);
 
 	if (calc_mode == 1) {  // 计算器模式
+		ArduinoCalc calc;
 		double result;
-        String errMsg;  // 用于接收错误信息的字符串
-        bool success = calculate(_user_prompt, result, errMsg);
-        
+        String errMsg, outStr;  // 用于接收 错误信息与输出结果 的字符串
+        // bool success = calculate(_user_prompt, result, errMsg);
+		bool success = calc.calculate(_user_prompt, result, errMsg, outStr);
+        Serial.println(result);
+		Serial.println(errMsg);
+		Serial.println(outStr);
+
         if (success) {
             Serial.println("输入: " + _user_prompt);
             Serial.println("结果: " + String(result, 4)); // 输出结果，保留4位小数

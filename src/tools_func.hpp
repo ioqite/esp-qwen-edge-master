@@ -184,6 +184,37 @@ String wait_until_read_key() {
 	}
 }
 
+// 读取输入直到 $12键
+String read_text(bool &is_available, const char *placeholder) {
+	is_available = 0;
+	String text = "", t = "";
+	const char* tmp_placeholder;
+	ta_tmp_save();
+	if (lvgl_mux_lock()) { // 上锁
+		tmp_placeholder = lv_textarea_get_placeholder_text(ta);
+		lv_textarea_set_placeholder_text(ta, placeholder);
+		lvgl_mux_unlock(); // 解锁
+	}
+	ta_set_text("");
+	while (1) {
+		t = read_key();
+		if (t == "$1") break;
+		if (t == "$12") { is_available = 1; break; }
+		else {
+			text += t;
+			vTaskDelay(2 / portTICK_PERIOD_MS);
+		}
+		core0_loop_func();
+	}
+	ta_tmp_recover();
+	if (tmp_placeholder && lvgl_mux_lock()) { // 上锁
+		lv_textarea_set_placeholder_text(ta, tmp_placeholder);
+		lvgl_mux_unlock(); // 解锁
+	}
+	bleLink.clearBuffer(); // 清空缓冲区
+	return text;
+}
+
 // 列出目录下的所有文件和子目录 (未加锁)
 void listDir(fs::FS &fs, const char *dirname, uint8_t levels, String& response) {
 	File root = fs.open(dirname);
