@@ -67,13 +67,15 @@ IN_PSRAM int eventIdCounter = 0; // 事件ID计数器
 // ######################## 状态变量 ##########################
 
 // bool transferring_key = 0;     // 开始接收新的键 (有的键是多字母的)
-bool skip_wifi = 0;            // 是否跳过WiFi连接
-bool connecting_wifi = false;  // 是否正在连接WiFi
-bool syncing_sntp = false;     // 是否正在同步SNTP时间
+bool skip_wifi = false;           // 是否跳过WiFi连接
+bool first_connect_wifi = true;   // 是否首次连接WiFi
+bool connecting_wifi = false;     // 是否正在连接WiFi
+bool syncing_sntp = false;        // 是否正在同步SNTP时间
 String proc_key;   // 处理中的按键
 String tmp_key;    // 读取时的临时按键 (仅限 wait_until_read_key()、read_key()、BLEonReceive() 访问)
-std::vector<String> ta_history;
-uint16_t ta_history_pos = 0;
+bool sdcard_inited = false;
+bool zh_pinyin_is_begin = false;
+
 
 // ######################## 拼音输入法 ########################
 
@@ -93,10 +95,15 @@ IN_PSRAM bool typing_pinyin = false; // 是否正在输入拼音标志
 
 // 最大对话窗口 个数
 #define MAX_CHAT_WINDOW 5
-// 最大 保存的对话轮数
-#define MAX_MESSAGES 10
+// 最大 保存的对话轮数/ta记录数
+#define MAX_MESSAGES 20
 
 IN_PSRAM String main_label_text_tmp;
+
+// struct edit_ta_info_t {
+// 	String text;
+// 	int16_t ta_history_pos = 0;
+// };
 
 struct chat_window_t{
 	String ta_text_save;
@@ -104,6 +111,11 @@ struct chat_window_t{
 	std::vector<String> chatHistory; // 使用一个数组来存储 每一条JSON格式的消息(String) max:MAX_MESSAGES * 2 + 1
 	uint32_t ta_pos = 0;
 	int16_t main_label_pos = 0;
+	bool typing_simple_quotes = false;   // 是否正在输入 一对单引号
+	bool typing_double_quotes = false;   // 是否正在输入 一对双引号
+	std::vector<String> ta_history;  // ta历史记录
+	int16_t ta_history_pos = 0;     // 当前正在编辑/查看的ta历史记录 的位置(从前往后数，0为第一次记录), -1 表示最新
+	// std::vector<edit_ta_info_t> editing_ta_history;  // 正在编辑的 ta历史记录
 };
 chat_window_t IN_PSRAM chat_windows[MAX_CHAT_WINDOW];
 
@@ -116,15 +128,11 @@ IN_PSRAM uint8_t chat_window_select = 0;
 // 请求所需变量
 IN_PSRAM String answer;
 
-// 用户提示词
-IN_PSRAM String user_prompt = "";
-
 bool use_proc = 0;         // 是否使用 拼音预处理,       由 &2 键切换
 bool show_proced = 0;      // 是否显示 预处理过的 提示词, 由 &3 键切换
 bool calc_mode   = 0;      // 是否启用 计算器模式,       由 &4 键切换
 // bool enable_search = 0; // 是否启用 联网搜索,         未实现
 
-IN_PSRAM String tmp_output;      // 临时文本输出
 
 // ######################## 其他 ###########################
 
@@ -139,17 +147,6 @@ SPIClass sd_spi_bus(FSPI);
 // 屏幕, More: https://github.com/moononournation/Arduino_GFX/wiki/
 Arduino_DataBus *bus = new Arduino_ESP32SPI(LCD_DC, LCD_CS, LCD_SCLK, LCD_MOSI, LCD_MISO, FSPI /* spi_num */, true);
 Arduino_GFX *gfx = new Arduino_ST7789(bus, LCD_RST, EXAMPLE_LCD_ROTATION, true /* IPS */, EXAMPLE_LCD_H_RES, EXAMPLE_LCD_V_RES);
-
-
-// GMT 时间偏移量 (秒)
-#define GMT_OFFSET_SEC 8 * 3600
-// SNTP 服务器
-#define SNTP_SERVER "ntp.cnnic.cn" // CNNIC
-
-// 文本快捷键
-#define TEXT_SHORTCUT_SIZE 9
-const char* TEXT_SHORTCUT[TEXT_SHORTCUT_SIZE] = {"用", "控制", "是", "什么", "如何", "有", "中", "的", "详细说一下"};
-
 
 
 // ######################################===========#######################################
@@ -215,44 +212,58 @@ String read_text(bool &is_available, const char *placeholder) {
 	return text;
 }
 
-// 列出目录下的所有文件和子目录 (未加锁)
-void listDir(fs::FS &fs, const char *dirname, uint8_t levels, String& response) {
-	File root = fs.open(dirname);
-	if (!root) {
-		response += "Failed to open directory: ";
-		response += dirname;
-		return;
-	}
-	if (!root.isDirectory()) {
-		response += "Not a directory";
-		return;
-	}
+// 列出目录下的所有文件和子目录 (未加锁) - 新
+void listDir(fs::FS &fs, const char *dirname, uint8_t levels, String& response, int depth = 0) {
+    File root = fs.open(dirname);
+    if (!root) {
+        response += "Failed to open directory: ";
+        response += dirname;
+        return;
+    }
+    if (!root.isDirectory()) {
+        response += "Not a directory";
+        return;
+    }
 
-	response += String("List: ") + dirname + "\r\n";
+    // 仅在最外层(第0层)打印根目录路径，子目录递归时不再重复打印路径头
+    if (depth == 0) {
+        response += String("List: ") + dirname + "\r\n";
+    }
 
-	File file = root.openNextFile();
-	while (file) {
-		if (file.isDirectory()) {
-			response += "  Dir: ";
-			response += file.name();
-			response += "\r\n";
-			if (levels) {
-				listDir(fs, file.path(), levels - 1, response);
-			}
-		} else {
-			response += "  File: ";
-			response += file.name();
-			response += "  Size: ";
-			response += file.size();
-			response += "\r\n";
-		}
-		file = root.openNextFile();
-	}
-	response += "\r\n";
+    // 根据当前递归深度生成缩进 (每层缩进 2 个空格)
+    String indent = "";
+    for (int i = 0; i < depth; i++) {
+        indent += "  ";
+    }
+
+    File file = root.openNextFile();
+    while (file) {
+        if (file.isDirectory()) {
+            response += indent + "  Dir: ";
+            response += file.name();
+            response += "\r\n";
+            if (levels) {
+                // 递归调用：levels 减 1，depth 加 1
+                listDir(fs, file.path(), levels - 1, response, depth + 1);
+            }
+        } else {
+            response += indent + "  File: ";
+            response += file.name();
+            response += "  Size: ";
+            response += String(file.size()); // 使用 String() 显式转换以防部分编译器报错
+            response += "\r\n";
+        }
+        file = root.openNextFile();
+    }
+    
+    // 移除原先每次递归都会产生的多余空行，仅在根目录结束时保留一个空行
+    if (depth == 0) {
+        response += "\r\n";
+    }
 }
 
 // 创建新目录 (未加锁)
-void createDir(fs::FS &fs, const char * path){
+void createDir(fs::FS &fs, const char * path) {
     // 打印正在创建的目录
     Serial.printf("Creating Dir: %s\n", path);
     if(fs.mkdir(path)){
@@ -264,7 +275,7 @@ void createDir(fs::FS &fs, const char * path){
 }
 
 // 将 JPEG图片数据 写入文件 (未加锁)
-void writejpg(fs::FS &fs, const char * path, const uint8_t *buf, size_t size){
+void writejpg(fs::FS &fs, const char * path, const uint8_t *buf, size_t size) {
 	// 打开文件用于写入
 	File file = fs.open(path, FILE_WRITE);
 	if(!file){
@@ -279,7 +290,7 @@ void writejpg(fs::FS &fs, const char * path, const uint8_t *buf, size_t size){
 }
 
 // 读取 指定目录下的文件数量 (未加锁)
-int readFileNum(fs::FS &fs, const char * dirname){
+int readFileNum(fs::FS &fs, const char * dirname) {
 	File root = fs.open(dirname);
 	if(!root){
 		Serial.printf("[ERROR] Failed to open '%s'\r\n", dirname);
@@ -301,7 +312,7 @@ int readFileNum(fs::FS &fs, const char * dirname){
 }
 
 // 获取 指定目录中 下一个WAV文件的索引(名称) (未加锁)
-void getWavFileIdex(fs::FS &fs, const char * dirname, int &fileIndex){
+void getWavFileIndex(fs::FS &fs, const char * dirname, int &fileIndex) {
 	File root = fs.open(dirname);
 	if(!root){
 		Serial.printf("[ERROR] Failed to open '%s'\r\n", dirname);
@@ -321,6 +332,18 @@ void getWavFileIdex(fs::FS &fs, const char * dirname, int &fileIndex){
 
 // 初始化 SD 卡
 void init_SDcard() {
+	if (sdcard_inited) return;
+
+	char * main_label_tmp_save = NULL;
+	int16_t main_label_tmp_pos = 0;
+	// 暂存main_label（与外部隔离） 并添加提示
+	if (lvgl_mux_lock()) { // 上锁
+		main_label_tmp_save = lv_label_get_text(main_label);
+		main_label_tmp_pos = lv_obj_get_scroll_y(main_panel);
+		lv_label_set_text(main_label, "初始化SD卡 ...");
+		lvgl_mux_unlock(); // 解锁
+	}
+
 	if (spi_mux_lock()) {   // 加锁
 		sd_spi_bus.begin(SD_SCK, SD_MISO, SD_MOSI, -1);
 		if (!SD.begin(SD_CS, sd_spi_bus)) {
@@ -334,8 +357,8 @@ void init_SDcard() {
 		if (cardType == CARD_NONE) {
 			Serial.println("未检测到 SD卡");
 			sd_status = "未检测到 SD卡";
-			spi_mux_unlock();
-			return;
+			spi_mux_unlock();   // 解锁
+			goto init_sd_exit;
 		}
 
 		Serial.print("SD卡类型: ");
@@ -350,7 +373,7 @@ void init_SDcard() {
 		}
 
 		Serial.printf("Total space: %lluMiB\r\n",  SD.totalBytes() / (1024 * 1024));
-		Serial.printf( "Used space: %lluMiB\r\n",  SD.usedBytes()  / (1024 * 1024));
+		Serial.printf(" Used space: %lluMiB\r\n",  SD.usedBytes()  / (1024 * 1024));
 		
 		// String list_res = "";
 		// listDir(SD, SD_PREFIX, 3, list_res);
@@ -358,6 +381,17 @@ void init_SDcard() {
 
 		spi_mux_unlock();   // 解锁
 	}
+	sdcard_inited = true;
+	sd_status = "";
+	goto init_sd_exit;
+init_sd_exit:
+	// 恢复 main_label（与外部隔离）
+	if (lvgl_mux_lock()) { // 上锁
+		lv_label_set_text(main_label, main_label_tmp_save);
+		lv_obj_scroll_to_y(main_panel, main_label_tmp_pos, LV_ANIM_ON);
+		lvgl_mux_unlock(); // 解锁
+	}
+	return;
 }
 
 // 初始化 I2S
@@ -498,6 +532,14 @@ void record_wav(const char *record_key) {
 	if (pcm_byte_size > 0) {
 		File wav_file;
 		int wav_index;
+		init_SDcard(); // 初始化 SD 卡
+		if (!sdcard_inited) {
+			Serial.println(sd_status);
+			main_label_add_text(sd_status.c_str());
+			free(pcm_data);// 释放内存
+			return;
+		}
+		// 打开 WAV文件
 		if (spi_mux_lock()) {
 			// 读取 SD卡上 WAV文件数量
 			wav_index = readFileNum(SD, SD_PREFIX "records");
@@ -506,14 +548,15 @@ void record_wav(const char *record_key) {
 				createDir(SD, SD_PREFIX "records");
 				wav_index = 0;
 			}
-			getWavFileIdex(SD, SD_PREFIX "records/", wav_index);
-			if (wav_index == -1) { // 获取失败时，使用文件数量作名称
+			getWavFileIndex(SD, SD_PREFIX "records/", wav_index);
+			if (wav_index == -1) { // 获取失败时，使用文件数量作名称（即便还获取失败）
 				wav_index = readFileNum(SD, SD_PREFIX "records");
 			}
-			// 1. 打开 SD 卡文件 (FILE_WRITE 会创建新文件，如果存在会覆盖)
+			// 打开 SD 卡文件 (FILE_WRITE 会创建新文件，如果存在会覆盖)
 			wav_file = SD.open(SD_PREFIX "records/" + String(wav_index) + ".wav", FILE_WRITE);
 			spi_mux_unlock();
 		}
+		// 写入 WAV头 与 数据
 		if (wav_file) {
 			Serial.print("[WAV] 写入 WAV头 中 ... ");
 			main_label_add_text("[WAV] 写入 WAV头 中 ... ");
@@ -730,6 +773,8 @@ void asr_send(uint16_t* pcm_data, uint32_t size) {
 	Serial.print("[ASR] 连接服务器中 ... ");
 	main_label_set_text("[ASR] 连接服务器中 ... ");
 	
+	// 注册 WebSocket消息回调
+	client.onMessage(ws_callback);
 	// 添加 Authorization 和 OpenAI-Beta 请求头
 	client.addHeader("Authorization", "Bearer " apiKey);
 	client.addHeader("OpenAI-Beta", "realtime=v1");
@@ -774,7 +819,8 @@ void asr_send(uint16_t* pcm_data, uint32_t size) {
 		// Manual模式：客户端控制断句
 		tmp_doc["session"]["turn_detection"] = nullptr;
 #endif
-	
+
+	String tmp_output;    // 临时文本输出
 	serializeJson(tmp_doc, tmp_output);
 	
 	Serial.println("[ASR] session.update");
@@ -1088,7 +1134,6 @@ void main_label_tmp_save() {
 	if (lvgl_mux_lock()) { // 上锁
 		current_window.main_label_text_save = lv_label_get_text(main_label);
 		current_window.main_label_pos = lv_obj_get_scroll_y(main_panel);
-		Serial.println(current_window.main_label_pos);
 		lvgl_mux_unlock(); // 解锁
 	}
 }
@@ -1097,7 +1142,6 @@ void main_label_tmp_recover() {
 	if (lvgl_mux_lock()) { // 上锁
 		lv_label_set_text(main_label, current_window.main_label_text_save.c_str());
 		lv_obj_scroll_to_y(main_panel, current_window.main_label_pos, LV_ANIM_ON);
-		Serial.println(current_window.main_label_pos);
 		lvgl_mux_unlock(); // 解锁
 	}
 }
@@ -1106,7 +1150,6 @@ void main_label_tmp_show(const char* text, uint16_t delay_ms = 700) {
 	if (lvgl_mux_lock()) { // 上锁
 		current_window.main_label_text_save = lv_label_get_text(main_label);
 		current_window.main_label_pos = lv_obj_get_scroll_y(main_panel);
-		Serial.println(current_window.main_label_pos);
 		lv_label_set_text(main_label, text);
 		lvgl_mux_unlock(); // 解锁
 	}
@@ -1116,7 +1159,6 @@ void main_label_tmp_show(const char* text, uint16_t delay_ms = 700) {
 	if (lvgl_mux_lock()) { // 上锁
 		lv_label_set_text(main_label, current_window.main_label_text_save.c_str());
 		lv_obj_scroll_to_y(main_panel, current_window.main_label_pos, LV_ANIM_ON);
-		Serial.println(current_window.main_label_pos);
 		lvgl_mux_unlock(); // 解锁
 	}
 }
@@ -1195,12 +1237,33 @@ void recover_pinyin(bool lock = 1) {
 	}
 }
 
+/**
+ * @brief 向 ta历史 中添加 当前指令/提示词, 并在 超过最大记录数时 自动删除最早的一条记录
+ * @param prompt 要添加的 指令/提示词(记录)
+ */
+void addPromptToTaHistory(const String &prompt) {
+    // 如果历史记录已满，则移除最早的记录
+    if (current_window.ta_history.size() >= MAX_MESSAGES) {
+		current_window.ta_history.erase(
+			current_window.ta_history.begin()
+		);
+    }
+    // 将记录存入数组
+    current_window.ta_history.push_back( prompt );
+}
+
 // 匹配拼音 -> 词
 void word_match(const String &input_str, std::vector<String> &word_result, String &split_result) {
 	split_result = "";
 	word_result.clear();
 	// word_result.shrink_to_fit();
 	std::vector<String>().swap(word_result);
+	
+	// 初始化 拼音解码器
+	if (!zh_pinyin_is_begin) {
+		zh_pinyin_begin();
+		zh_pinyin_is_begin = true;
+	}
 
 	if (!input_str.length()) {
 		Serial.println("[Error] word_match(): input_str is empty!");
@@ -1331,13 +1394,32 @@ void proc_other_input_key() {
 		} else candidate_offset += MOVE_WORDS;
 		update_candidate();
 	}
+	// 自动左/右引号
+	else if (proc_key == "‘") {
+		if (!current_window.typing_simple_quotes) {
+			ta_add_text("‘");
+			current_window.typing_simple_quotes = true;
+		} else {
+			ta_add_text("’");
+			current_window.typing_simple_quotes = false;
+		}
+	}
+	else if (proc_key == "“") {
+		if (!current_window.typing_double_quotes) {
+			ta_add_text("“");
+			current_window.typing_double_quotes = true;
+		} else {
+			ta_add_text("”");
+			current_window.typing_double_quotes = false;
+		}
+	}
 	// 拼音输入下的 其他字符 及 正常输入
 	else {
 		ta_add_text(proc_key.c_str());
 	}
 }
 
-// 读取 IMU 数据, 并 更新滚动位置
+// 读取 IMU 数据, 并 更新滚动位置 (已上锁)
 void my_read_imu() {
     IMU.update();
     IMU.getAccel(&accelData); // accelData.accelX accelData.accelY accelData.accelZ
@@ -1349,6 +1431,7 @@ void my_read_imu() {
 		lvgl_mux_unlock();
 	}
 
+	// 以下用于模拟鼠标
     // touchpad_x -= accelData.accelX * 8;
 	// touchpad_y -= accelData.accelY * 8;
 	// if (touchpad_x < 0) touchpad_x = 0;
@@ -1359,6 +1442,7 @@ void my_read_imu() {
 	// Serial.println(accelData.accelX);Serial.print(",");Serial.println(accelData.accelY);
 }
 
+// 文本输入框 事件回调 (LVGL回调)
 static void ta_event_cb(lv_event_t * e) {
 	lv_event_code_t code = lv_event_get_code(e);
 	lv_obj_t * ta = (lv_obj_t *)lv_event_get_target(e);
@@ -1384,22 +1468,27 @@ static void ta_event_cb(lv_event_t * e) {
     }
 }
 
-/* 物理按键输入接口 */
-void send_key_to_ta(uint32_t key) {
-	// 确保文本框有焦点
-    if(ta) {
+// 物理按键输入接口 (默认加锁)
+void send_key_to_ta(uint32_t key, bool lock = true) {
+    if(!ta) Serial.println("send_key_to_ta: ta is NULL!");
+	if(!kb) Serial.println("send_key_to_ta: kb is NULL!");
+
+	if (lock) { // 加锁
 		if (lvgl_mux_lock()) { // 上锁
+			// 确保文本框有焦点
 			lv_obj_add_state(ta, LV_STATE_FOCUSED);
-			// 发送给键盘 (kb)
-			if(kb) {
-				// Serial.printf("send_key_to_ta: kb: %c\r\n", (char)key);
-				// 向文本框发送 KEY 事件
-				lv_event_send(ta, LV_EVENT_KEY, &key);
-			} else Serial.println("send_key_to_ta: kb is NULL!");
-			
+			// 向文本框发送 KEY 事件
+			lv_event_send(ta, LV_EVENT_KEY, &key);
+			// Serial.printf("send_key_to_ta: %c\r\n", (char)key);
 			lvgl_mux_unlock();
 		}
-	} else Serial.println("send_key_to_ta: ta is NULL!");
+	} else { // 不加锁
+		// 确保文本框有焦点
+		lv_obj_add_state(ta, LV_STATE_FOCUSED);
+		// 向文本框发送 KEY 事件
+		lv_event_send(ta, LV_EVENT_KEY, &key);
+		// Serial.printf("send_key_to_ta: %c\r\n", (char)key);
+	}
 }
 
 // // 鼠标回调
@@ -1526,6 +1615,43 @@ void onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
     }
 }
 
+/**
+ * @brief 根据秒级 GMT 偏移量设置 ESP32 的 TZ 环境变量
+ * 
+ * @param gmt_offset_sec 相对于 UTC 的偏移量（秒）。
+ *                       例如：东八区传入 8 * 3600 (28800)
+ *                       西五区传入 -5 * 3600 (-18000)
+ */
+void setTimezoneByOffset(long gmt_offset_sec) {
+    char tz[32];
+    
+    if (gmt_offset_sec == 0) {
+        // UTC+0
+        snprintf(tz, sizeof(tz), "GMT0");
+    } else {
+        // POSIX 规范中，TZ 的符号与实际偏移相反：
+        // 东经（正偏移）用 '-'，西经（负偏移）用 '+'
+        char sign = (gmt_offset_sec > 0) ? '-' : '+';
+        
+        long abs_offset = abs(gmt_offset_sec);
+        int hours = abs_offset / 3600;
+        int minutes = (abs_offset % 3600) / 60;
+        
+        if (minutes == 0) {
+            // 整点偏移，如 "GMT-8" (对应 UTC+8)
+            snprintf(tz, sizeof(tz), "GMT%c%d", sign, hours);
+        } else {
+            // 带分钟偏移，如 "GMT-5:30" (对应 UTC+5:30)
+            snprintf(tz, sizeof(tz), "GMT%c%d:%02d", sign, hours, minutes);
+        }
+    }
+
+    // 设置 TZ 环境变量 (1 表示覆盖现有的值)
+    setenv("TZ", tz, 1);
+    // 更新 C 库的时间函数使用的时区信息
+    tzset();
+}
+
 // 同步 SNTP 时间
 void sync_sntp() {
 	syncing_sntp = true;
@@ -1533,7 +1659,12 @@ void sync_sntp() {
 	Serial.print("使用 SNTP 同步时间 ...");
 	main_label_set_text("#10acb1 使用 SNTP 同步时间 ...");
 	configTime(GMT_OFFSET_SEC, 0, SNTP_SERVER);
-	while (!getLocalTime(&timeinfo)) {
+	
+	time_t now;
+	while (1) {
+		time(&now);
+		localtime_r(&now, &timeinfo);
+		if (timeinfo.tm_year > (2016 - 1900)) break; // 2016为官方代码中使用的年份
 		vTaskDelay(700 / portTICK_PERIOD_MS);
 		Serial.print(".");
 		main_label_add_text(".");
@@ -1604,9 +1735,12 @@ void connect_wifi() {
 			break;
 		}
 		else if (proc_key == "$12") {
-			skip_wifi = 1;
 			Serial.println("跳过 WIFI 连接");
-			main_label_set_text("#115df5 跳过 WIFI 连接#");
+			if (first_connect_wifi) {
+				skip_wifi = 1;
+				main_label_set_text("#115df5 跳过 WIFI 连接#");
+				first_connect_wifi = 0;
+			} else main_label_tmp_recover();
 			break;
 		}
 		else Serial.println("未知 SSID");

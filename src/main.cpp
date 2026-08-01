@@ -13,19 +13,10 @@ void my_loop(void *param) {
 		lvgl_mux_unlock(); // 解锁
 	}
 
-	// 初始化 SD 卡
-	init_SDcard();
+	// 提前设置时区 (防止 未同步时间 导致的时间偏移)
+	setTimezoneByOffset(GMT_OFFSET_SEC);
 
-	// 初始化 I2S
-	// setupI2S();
-
-	// 初始化 拼音解码器
-	zh_pinyin_begin();
-
-	// 注册 WebSocket消息回调
-	client.onMessage(ws_callback);
-
-	Serial.println("Setup done");
+	Serial.println("初始化完毕");
 	print_heap_free("初始化完毕");
 
 	// 主循环 (Core 0)
@@ -33,23 +24,20 @@ void my_loop(void *param) {
 		proc_key = wait_until_read_key(); // 读取按键输入
 		Serial.println("Key: " + proc_key);
 		
-		// 顶部功能键
+		// ----- 顶部功能键 -----
 		/* $1-$9 */if (proc_key.length() >= 2 && proc_key.startsWith("$") && proc_key.substring(1).toInt() > 0 && proc_key.substring(1).toInt() <= TEXT_SHORTCUT_SIZE) {
 			ta_add_text(TEXT_SHORTCUT[ proc_key.substring(1).toInt() - 1 ]);
-		} else if (proc_key == "$10") {
-			reset_chat_history();
-		} else if (proc_key == "$11") {
-			ta_set_text("");
+		} else if (proc_key == "$10") { reset_chat_history();
+		} else if (proc_key == "$11") { ta_set_text("");
 		/* 获取结果 */} else if (proc_key == "$12") {
+			String user_prompt = "";
 			if (lvgl_mux_lock()) { // 上锁
 				// 关闭 拼音输入 并 清空输入数据、隐藏 候选词 与 输入框
 				typing_pinyin = false;
-				if (lvgl_mux_lock()) {
-					lv_obj_add_flag(candidate_l, LV_OBJ_FLAG_HIDDEN);
-					lv_obj_add_flag(pinyin_input_l, LV_OBJ_FLAG_HIDDEN);
-					clear_pinyin();
-					lvgl_mux_unlock(); // 解锁
-				}
+				lv_obj_add_flag(candidate_l, LV_OBJ_FLAG_HIDDEN);
+				lv_obj_add_flag(pinyin_input_l, LV_OBJ_FLAG_HIDDEN);
+				clear_pinyin();
+				
 				user_prompt = lv_textarea_get_text(ta);
 				if (!user_prompt.startsWith("-scr")) {
 					scroll_main_p(0, 0);
@@ -57,18 +45,23 @@ void my_loop(void *param) {
 
 				lvgl_mux_unlock(); // 解锁
 			}
-
+			main_label_tmp_save(); // 为某些指令提前保存 main_label 状态
 			if (!user_prompt.startsWith("-scr")) {
 				Serial.println("等待结果中 ...");
 				main_label_set_text("#7e00d2 等待结果中 ... #");
 			}
+
+			addPromptToTaHistory(user_prompt);
+			current_window.ta_history_pos = -1;
+			current_window.typing_double_quotes = false; // 重置 双引号 状态
+			current_window.typing_simple_quotes = false; // 重置 单引号 状态
 
 			getAnswer(user_prompt);
 			if (answer.length()) main_label_set_text(answer.c_str()); // answer为空则不更新
 			if (!user_prompt.startsWith("-scr")) {
 				scroll_main_p(0, 0);
 			}
-		/* $S1-$S9 */} else if (proc_key.length() >= 3 && proc_key.startsWith("$S") && proc_key.substring(2).toInt() > 0 && proc_key.substring(2).toInt() <= MAX_CHAT_WINDOW) {
+		/* $S1-$Sx */} else if (proc_key.length() >= 3 && proc_key.startsWith("$S") && proc_key.substring(2).toInt() > 0 && proc_key.substring(2).toInt() <= MAX_CHAT_WINDOW) {
 			if (lvgl_mux_lock()) { // 上锁
 				// 保存当前窗口 所有状态
 				current_window.ta_text_save = lv_textarea_get_text(ta);
@@ -94,9 +87,53 @@ void my_loop(void *param) {
 			
 			// 切换到新窗口 ta的状态
 			ta_tmp_recover();
-		}
-		// 中部功能键
-		  else if (proc_key == "BCK") {
+		} else if (proc_key == "$S11") { /* 向上查看ta记录 */
+			// if (lvgl_mux_lock()) { // 上锁
+			// 	current_window.editing_ta_history[ current_window.ta_history_pos ] = {
+			// 		lv_textarea_get_text(ta), current_window.ta_history_pos
+			// 	};
+			// 	lvgl_mux_unlock(); // 解锁
+			// }
+
+			if (current_window.ta_history_pos == -1) { // 如果为-1 则获取当前最后一项的位置
+				current_window.ta_history_pos = current_window.ta_history.size() - 1;
+			} else {
+				current_window.ta_history_pos = 
+						constrain( current_window.ta_history_pos-1, 0, current_window.ta_history.size() -1);
+			}
+			// Serial.println("ta_history_pos: " + String(current_window.ta_history_pos));
+			
+			if (lvgl_mux_lock()) { // 上锁
+				lv_textarea_set_text(ta, 
+					current_window.ta_history[ current_window.ta_history_pos ].c_str()
+				);
+				lvgl_mux_unlock(); // 解锁
+			}
+		} else if (proc_key == "$S12") { /* 向下查看ta记录 */
+			// if (lvgl_mux_lock()) { // 上锁
+			// 	current_window.editing_ta_history[ current_window.ta_history_pos ] = {
+			// 		lv_textarea_get_text(ta), current_window.ta_history_pos
+			// 	};
+			// 	lvgl_mux_unlock(); // 解锁
+			// }
+
+			if (current_window.ta_history_pos == -1) { // 如果为-1 则获取当前最后一项的位置
+				current_window.ta_history_pos = current_window.ta_history.size() - 1;
+			} else {
+				current_window.ta_history_pos = 
+						constrain(current_window.ta_history_pos+1, 0, current_window.ta_history.size() -1);
+			}
+
+			// Serial.println("ta_history_pos: " + String(current_window.ta_history_pos));
+
+			if (lvgl_mux_lock()) { // 上锁
+				lv_textarea_set_text(ta, 
+					current_window.ta_history[ current_window.ta_history_pos ].c_str()
+				);
+				lvgl_mux_unlock(); // 解锁
+			}
+		// ----- 中部功能键 -----
+		} else if (proc_key == "BCK") {
 			if (typing_pinyin && pinyin_str.length()) { // 拼音输入模式
 				candidate_offset = 0;
 				pinyin_str = pinyin_str.substring(0, pinyin_str.length() - 1);
@@ -124,29 +161,24 @@ void my_loop(void *param) {
 				send_key_to_ta(LV_KEY_ENTER);
 			}
 		}
-		// 方向键
-		  else if (proc_key == "UP") {
-			send_key_to_ta(LV_KEY_UP);
-		} else if (proc_key == "DOWN") {
-			send_key_to_ta(LV_KEY_DOWN);
-		} else if (proc_key == "LEFT") {
-			send_key_to_ta(LV_KEY_LEFT);
-		} else if (proc_key == "RIGT") {
-			send_key_to_ta(LV_KEY_RIGHT);
-		}
-		// 底部功能键
-		/* ASR */   else if (proc_key == "&1") {
-			hide_pinyin();
-			scroll_main_p();
-			run_asr("&1");
-			scroll_main_p();
-			recover_pinyin();
+		// ----- 方向键 -----
+		  else if (proc_key == "UP"  ) { send_key_to_ta(LV_KEY_UP   );
+		} else if (proc_key == "DOWN") { send_key_to_ta(LV_KEY_DOWN );
+		} else if (proc_key == "LEFT") { send_key_to_ta(LV_KEY_LEFT );
+		} else if (proc_key == "RIGT") { send_key_to_ta(LV_KEY_RIGHT);
+		// ----- 底部功能键 -----
+		/* ASR */ } else if (proc_key == "&1") {
+			hide_pinyin();    // 临时隐藏 拼音输入框
+			scroll_main_p();  // 滚动到顶部
+			run_asr("&1");      // 运行 ASR
+			scroll_main_p();  // 滚动到顶部
+			recover_pinyin(); // 恢复显示 拼音输入框
 		/* WAV */ } else if (proc_key == "&2") {
-			hide_pinyin();
-			scroll_main_p();
-			record_wav("&2");
-			scroll_main_p();
-			recover_pinyin();
+			hide_pinyin();    // 临时隐藏 拼音输入框
+			scroll_main_p();  // 滚动到顶部
+			record_wav("&2");   // 录制 WAV
+			scroll_main_p();  // 滚动到顶部
+			recover_pinyin(); // 恢复显示 拼音输入框
 		/*     */ } else if (proc_key == "&3") {
 		/* 计算器 */}else if (proc_key == "&4") {
 			ta_tmp_show((calc_mode = !calc_mode) ? "计算器模式: 1" : "计算器模式: 0");
@@ -169,9 +201,7 @@ void my_loop(void *param) {
 			ta_tmp_show((use_proc = !use_proc) ? "拼音预处理: 1" : "拼音预处理: 0");
 		/* 显示处理结果 */}else if (proc_key == "&$2") {
 			ta_tmp_show((show_proced = !show_proced) ? "显示处理结果: 1" : "显示处理结果: 0");
-		/* 其他 */ } else { // 处理其他输入的键
-			proc_other_input_key();
-		}
+		/* 其他 */ } else { proc_other_input_key(); /* 处理其他输入的键 */ }
 
 		// if (digitalRead(BTN_PIN_1) == HIGH) {
 		// 	vTaskDelay(15 / portTICK_PERIOD_MS);
@@ -194,10 +224,9 @@ void getAnswer(String& _user_prompt) {
 		answer = "输入为空";
 		return;
 	} 
-	// ta_history.push_back(_user_prompt);
 	
 	// 查看 时间 (自动刷新)
-	if (_user_prompt == "-t") {
+	if (_user_prompt == "-t" || _user_prompt == "-time") {
 		if (syncing_sntp) {
 			answer = "#bb5a14 正在同步时间 "; return;
 		}
@@ -242,7 +271,7 @@ void getAnswer(String& _user_prompt) {
 		answer = ""; return;
 	}
 	// 查看 运行信息 (自动刷新)
-	if (_user_prompt == "-i") {
+	if (_user_prompt == "-i" || _user_prompt == "-info") {
 		while (1) {
 			answer = "CPU 温度: " + String(temperatureRead());
 			// answer += "\r\n芯片版本: " + String(ESP.getChipRevision());
@@ -299,10 +328,10 @@ void getAnswer(String& _user_prompt) {
 	}
 	// 设置 背光亮度
 	if (_user_prompt.startsWith("-bl")) {
-		if (_user_prompt.startsWith("-bl=")) {
+		if (_user_prompt.startsWith("-bl=") && _user_prompt.length() > 4) {   // -bl=50 -> 背光亮度 50%
 			bl_duty = _user_prompt.substring(_user_prompt.indexOf("=") + 1).toDouble();
 		} else {
-			bl_duty = 55;
+			bl_duty = LEDC_DEFAULT_DUTY;
 		}
 		set_bl_duty();
 		answer = "背光亮度: " + String(bl_duty); return;
@@ -310,9 +339,9 @@ void getAnswer(String& _user_prompt) {
 	// 重启
 	if (_user_prompt == "-rst") { esp_restart(); }
 	// 深度睡眠
-	if (_user_prompt == "-ds") { esp_deep_sleep_start(); }
+	if (_user_prompt == "-ds" || _user_prompt == "-deep_s") { esp_deep_sleep_start(); }
 	// 深度睡眠 直到 WAKEUP_BTN == HIGH
-	if (_user_prompt == "-dsg") {
+	if (_user_prompt == "-dsg" || _user_prompt == "-deep_sg") {
 		esp_sleep_enable_ext0_wakeup((gpio_num_t)WAKEUP_BTN, HIGH);
 		esp_deep_sleep_start();
 	}
@@ -323,43 +352,50 @@ void getAnswer(String& _user_prompt) {
 	}
 	// 读取 SD卡
 	if (_user_prompt.startsWith("-sd")) {
-		if (sd_status != "") {
+		init_SDcard(); // 初始化 SD 卡
+		if (!sdcard_inited) {
 			answer = sd_status;
 			return; // 如有错误 则返回错误原因
 		}
 
-		// -sd=xxx -> 读取 SD_PREFIX目录下 xxx 文件
+		// -sd=xxx, -sd-r=xxx -> 读取 SD_PREFIX目录下 xxx 文件
 		String read_file_name = "";
-		if (_user_prompt.indexOf('=') == 3 && _user_prompt.length() > 4) { 
+		if ((_user_prompt.startsWith("-sd=")   && _user_prompt.length() > 4) || 
+			(_user_prompt.startsWith("-sd-r=") && _user_prompt.length() > 6) ) {
 			read_file_name = SD_PREFIX + _user_prompt.substring(_user_prompt.indexOf("=") + 1);
 		}
+
 		// -sd|xxx -> 读取 SD 卡根目录下 xxx 文件
-		else if (_user_prompt.indexOf('|') == 3 && _user_prompt.length() > 4) { 
+		else if ( _user_prompt.startsWith("-sd|")   && _user_prompt.length() > 4 ) { 
 			read_file_name = "/" + _user_prompt.substring(_user_prompt.indexOf("|") + 1);
+		}
+		// -sd-r/xxx -> 同上
+		else if ( _user_prompt.startsWith("-sd-r/") && _user_prompt.length() > 6 ) { 
+			read_file_name = "/" + _user_prompt.substring(_user_prompt.indexOf("/") + 1);
 		}
 
 		// 解析 要归递列出的层数
-		// -sd/x -> 归递列出 SD卡根目录下 x层 目录与文件
-		// -sd/  -> 归递列出 SD卡根目录下 3层 目录与文件
-		else if (_user_prompt.indexOf('/') == 3) {
+		// -sd/x, -sd-l/x -> 归递列出 SD卡根目录下 x层 目录与文件
+		// -sd/,  -sd-l/  -> 同上, x=3
+		else if (_user_prompt.startsWith("-sd/") || _user_prompt.startsWith("-sd-l/")) {
 			answer = "";
 			uint8_t levels = 3;
-			if (_user_prompt.length() > 4) { 
+			if (_user_prompt.length() > 4) {
 				levels = (_user_prompt.substring(_user_prompt.indexOf('/') + 1)).toInt();
-				Serial.println("归递列出 SD卡根目录下 " + String(levels) + "层 目录与文件");
 			}
+			Serial.println("归递列出 SD卡根目录下 " + String(levels) + "层 目录与文件");
 			if (spi_mux_lock()) {   // 加锁
 				listDir(SD, "/", levels, answer);
 				spi_mux_unlock(); // 解锁
 			}
 			return;
 		}
-		// -sd#x -> 归递列出 SD_PREFIX下 x层 目录与文件
-		// -sd#  -> 归递列出 SD_PREFIX下 3层 目录与文件
-		else if (_user_prompt.indexOf('#') == 3) {
+		// -sd#x, -sd-l=x -> 归递列出 SD_PREFIX下 x层 目录与文件
+		// -sd#,  -sd-l=  -> 同上, x=3
+		else if (_user_prompt.startsWith("-sd#") || _user_prompt.startsWith("-sd-l=")) {
 			answer = "";
 			uint8_t levels = 3;
-			if (_user_prompt.length() > 4) { 
+			if (_user_prompt.length() > 4) {
 				levels = (_user_prompt.substring(_user_prompt.indexOf('#') + 1)).toInt();
 			}
 			Serial.println("归递列出 SD卡 " SD_PREFIX " 下 " + String(levels) + "层 目录与文件");
@@ -372,9 +408,10 @@ void getAnswer(String& _user_prompt) {
 		}
 
 		// 解析 要读取的文件名
-		// -sd:xx -> 读取 SD_PREFIX目录下 textxx.txt 文件
-		else if (_user_prompt.indexOf(':') == 3 && _user_prompt.length() > 4) {
-			read_file_name = SD_PREFIX "text" + _user_prompt.substring(_user_prompt.indexOf(':') + 1) + ".txt";
+		// -sd:xx, -sd-r:xx -> 读取 SD_PREFIX目录下 textxx.txt 文件
+		else if ((_user_prompt.startsWith("-sd:")   && _user_prompt.length() > 4) || 
+			     (_user_prompt.startsWith("-sd-r:") && _user_prompt.length() > 6)) {
+			read_file_name = SD_PREFIX "text" + _user_prompt.substring(_user_prompt.indexOf(":") + 1) + ".txt";
 		}
 		// -sd -> 读取 SD_PREFIX下 text1.txt 文件
 		else {
@@ -397,17 +434,17 @@ void getAnswer(String& _user_prompt) {
 		return;
 	}
 	// 连接 WiFi
-	if (_user_prompt == "-wifi") {
+	if (_user_prompt == "-wf" || _user_prompt == "-wifi") {
 		connect_wifi();
 		answer = ""; return;
 	}
 	// 同步 SNTP 时间
-	if (_user_prompt == "-sntp") {
+	if (_user_prompt == "-snt" || _user_prompt == "-sntp") {
 		sync_sntp();
 		answer = ""; return;
 	}
 	// UART模式
-	if (_user_prompt.startsWith("-ut")) {
+	if (_user_prompt.startsWith("-ut") || _user_prompt.startsWith("-uart")) {
 		// uint8_t rx_pin = _user_prompt.substring(_user_prompt.indexOf("=") + 1);
 		// uint8_t tx_pin = _user_prompt.substring(_user_prompt.indexOf("=") + 1);
 		Serial2.begin(DEFAULT_BAUD, SERIAL_8N1, DEFAULT_RX_PIN, DEFAULT_TX_PIN); // 初始化 串口
@@ -445,6 +482,7 @@ void getAnswer(String& _user_prompt) {
 			scroll_to = _user_prompt.substring(_user_prompt.indexOf('=') + 1).toInt();
 		}
 		scroll_main_p(scroll_to);
+		main_label_tmp_recover();
 		answer = ""; return;
 	}
 	if (_user_prompt == "-cam") {
@@ -466,49 +504,72 @@ void getAnswer(String& _user_prompt) {
 		answer = "#db6319 已停止刷新 #"; return;
 	}
 	// 归档相关命令
-	if (_user_prompt.startsWith("-ac")) {
-		if (sd_status != "") {
-			answer = sd_status;
-			return; // 如有错误 则返回错误原因
-		}
-
+	if (_user_prompt.startsWith("-ac") || _user_prompt.startsWith("-archv") || _user_prompt.startsWith("-archive")) {
 		answer = "";
-		main_label_tmp_save();
-
+		
 		// -ac -> 先询问 操作类型
-		if (_user_prompt == "-ac") {
-			main_label_set_text("#4c3af0 请输入 操作类型:#\r\n #12bcec 1. 读取存档 # \r\n #10e38b 2. 写入存档 # \r\n #dd1e14 3. 退出 # \r\n");
-			answer = wait_until_read_key();
-			if (answer == "$12" || answer == "q" || answer == "3") {
-				goto ac_exit;
+		if (_user_prompt == "-ac" || _user_prompt == "-archive" || _user_prompt == "-archv") {
+			main_label_set_text("#4c3af0 请输入 操作类型:#\n #12bcec 1. 读取存档 # \n #10e38b 2. 写入存档 # \n #dd1e14 3. 退出 # \n");
+			while (1) {
+				answer = wait_until_read_key();
+				if (answer == "$12" || answer == "q" || answer == "3") {
+					goto ac_exit;
+				}
+				if (answer == "1" || answer == "2") {
+					break;
+				}
 			}
 		}
 		// -ac-r -> 读取存档
-		if (answer == "1" || _user_prompt == "-ac-r") { 
+		if (answer == "1" || _user_prompt.indexOf("-r") != -1) {
 			// ...
 		}
 		// -ac-w -> 写入存档
-		if (answer == "2" || _user_prompt == "-ac-w") { 
+		if (answer == "2" || _user_prompt.indexOf("-w") != -1) {
 			// ...
 		}
 		
-		// 读取 SD卡文件内容
+		init_SDcard(); // 初始化 SD 卡
+		if (!sdcard_inited) {
+			answer = sd_status;
+			return;  // 如有错误 则返回错误原因
+		}
+		// 写入 SD卡
 		if (spi_mux_lock()) {   // 加锁
-			File file = SD.open(SD_PREFIX "text1.txt", FILE_READ);
-			if (file.available()) {
-				answer = "";
-				while (file.available()) answer += (char)file.read();
-				file.close();
-			} else {
-				Serial.printf("无法读取 %s", SD_PREFIX "text1.txt");
-				answer = "#da2727 无法读取 #" SD_PREFIX "text1.txt";
-			}
+			// File file = SD.open(SD_PREFIX "text1.txt", FILE_READ);
+			// if (file.available()) {
+			// 	answer = "";
+			// 	while (file.available()) answer += (char)file.read();
+			// 	file.close();
+			// } else {
+			// 	Serial.printf("无法读取 %s", SD_PREFIX "text1.txt");
+			// 	answer = "#da2727 无法读取 #" SD_PREFIX "text1.txt";
+			// }
 			spi_mux_unlock(); // 解锁
 		}
 		goto ac_exit;
 	ac_exit:
 		main_label_tmp_recover();
 		answer = ""; return;
+	}
+	// 查看 ta历史记录
+	if (_user_prompt == "-ta-h" || _user_prompt == "-ta-history") {
+		answer = "";
+		for (uint16_t i = 0; i < current_window.ta_history.size(); i++) {
+			answer += String(i+1) + ". " + current_window.ta_history[i] + "\n";
+		}
+		return;
+	}
+	// 清空 ta历史记录
+	if (_user_prompt == "-ta-cl" || _user_prompt == "-ta-clear") {
+		answer = "已清空 ta历史记录";
+		// for (uint16_t i = 0; i < current_window.ta_history.size(); i++) {
+		// 	answer += String(i) + ". " + current_window.ta_history[i] + "\n";
+		// }
+		current_window.ta_history.clear(); // 清空 ta历史记录
+		std::vector<String>().swap(current_window.ta_history);
+		current_window.ta_history_pos = -1; // 重置 历史记录 位置
+		return;
 	}
 
 	// 快捷文本
@@ -528,12 +589,12 @@ void getAnswer(String& _user_prompt) {
         if (success) {
             Serial.println("输入: " + _user_prompt);
             Serial.println("结果: " + outStr);
-			answer = "#10b166 结果:# " + outStr;
+			answer = "#17d87e 结果:# " + outStr;
         } else {
             // 如果失败，统一输出累积的错误信息
             Serial.println("输入: " + _user_prompt);
             Serial.print(errMsg);
-			answer = "#b11010 " + errMsg;
+			answer = "#dc2222 " + errMsg;
         }
 	} else if (use_proc == 1) {  // 使用 拼音预处理
 		String proced;
@@ -580,7 +641,7 @@ void loop() {
   	vTaskDelay(1 / portTICK_PERIOD_MS);
 }
 
-// 硬件初始化
+// 硬件初始化 (仅初始化必要的硬件, 不初始化可选的硬件)
 void hardware_init() {
 	// 鼠标左键 (没有右键)
     pinMode(0, INPUT_PULLUP);
@@ -624,6 +685,10 @@ void hardware_init() {
 	}
 	if (!disp_draw_buf) {
 		Serial.println("LVGL disp_draw_buf allocate failed!");
+		if (spi_mux_lock()) {   // 加锁
+			gfx->fillScreen(0xAAAA);
+			spi_mux_unlock(); // 解锁
+		}
 		while (true) vTaskDelay(10000 / portTICK_PERIOD_MS);
 	} else {
 		lv_disp_draw_buf_init(&draw_buf, disp_draw_buf, NULL, bufSize);

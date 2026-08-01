@@ -57,4 +57,14 @@ const char* passwords[] = {"", // 索引从1开始, 0留空
 #define HREF_GPIO_NUM  4
 #define PCLK_GPIO_NUM  9
 
+// ##########################################################################
+// GMT 时间偏移量 (秒)
+#define GMT_OFFSET_SEC 8 * 3600
+// SNTP 服务器
+#define SNTP_SERVER "ntp.cnnic.cn" // CNNIC
+
+// 文本快捷键
+#define TEXT_SHORTCUT_SIZE 9
+const char* TEXT_SHORTCUT[TEXT_SHORTCUT_SIZE] = {"用", "控制", "是", "什么", "如何", "有", "中", "的", "详细说一下"};
+
 

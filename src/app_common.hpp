@@ -56,7 +56,7 @@
 #define SD_MISO 40
 #define SD_MOSI 38
 #define SD_CS 41
-#define SD_PREFIX "/esp-edge/" // 所有操作的 SD卡路径前缀
+#define SD_PREFIX "/esp-edge/" // 所有操作的 SD卡路径前缀 (除 根目录操作)
 
 // I2S 引脚定义 及 设置参数
 #define I2S_WS 9    // WS 引脚
@@ -81,7 +81,7 @@
 // 背光 LEDC 参数
 #define LEDC_FREQ             5000  // LEDC 频率
 #define LEDC_TIMER_10_BIT     10    // LEDC 定时器精度
-#define LEDC_DEFAULT_DUTY     80    // LEDC 默认占空比 (0-100)
+#define LEDC_DEFAULT_DUTY     52    // LEDC 默认占空比 (0-100)
 // 其他
 #define BAT_ADC   5
 // LVGL 屏幕参数
@@ -215,6 +215,11 @@ void hide_pinyin(bool lock);
 // 恢复 拼音输入框 相关 (默认加锁)
 void recover_pinyin(bool lock);
 
+/**
+ * @brief 向 ta历史 中添加 当前指令/提示词, 并在 超过最大记录数时 自动删除最早的一条记录
+ * @param prompt 要添加的 指令/提示词(记录)
+ */
+void addPromptToTaHistory(const String &prompt);
 
 // // 鼠标回调
 // void my_input_read(lv_indev_drv_t * drv, lv_indev_data_t*data);
@@ -225,8 +230,8 @@ void my_read_imu();
 // 文本输入框 事件回调 (LVGL回调)
 static void ta_event_cb(lv_event_t * e);
 
-// 发送按键到文本输入框
-void send_key_to_ta(uint32_t key);
+// 物理按键输入接口 (默认加锁)
+void send_key_to_ta(uint32_t key, bool lock);
 
 // 硬件 初始化
 void hardware_init();
@@ -273,6 +278,24 @@ void stopI2S();
 
 bool record_pcm(const char *record_key);
 
+// #################### FS #####################
+
+// 列出目录下的所有文件和子目录 (未加锁) - 新
+void listDir(fs::FS &fs, const char *dirname, uint8_t levels, String& response, int depth);
+
+// 创建新目录 (未加锁)
+void createDir(fs::FS &fs, const char * path);
+
+// 将 JPEG图片数据 写入文件 (未加锁)
+void writejpg(fs::FS &fs, const char * path, const uint8_t *buf, size_t size);
+
+// 读取 指定目录下的文件数量 (未加锁)
+int readFileNum(fs::FS &fs, const char * dirname);
+
+// 获取 指定目录中 下一个WAV文件的索引(名称) (未加锁)
+void getWavFileIndex(fs::FS &fs, const char * dirname, int &fileIndex);
+
+
 // ################## 其他 ###################
 
 // 检查是否有按键按下 并 读取, 无->"", 有->按下的按键
@@ -281,11 +304,11 @@ String read_key();
 // 读取按键输入
 String wait_until_read_key();
 
+// 读取输入直到 $12键
+String read_text(bool &is_available, const char *placeholder);
+
 // 初始化 SD卡
 void init_SDcard();
-
-// 列出目录下的所有文件和子目录
-void listDir(fs::FS &fs, const char *dirname, uint8_t levels, String& response);
 
 // 向 Qwen-ASR 发送音频数据
 void asr_send(uint16_t* pcm_data, uint32_t size);
@@ -313,5 +336,14 @@ void deinit_camera();
 
 // 摄像头循环
 void camera_loop();
+
+/**
+ * @brief 根据秒级 GMT 偏移量设置 ESP32 的 TZ 环境变量
+ * 
+ * @param gmt_offset_sec 相对于 UTC 的偏移量（秒）。
+ *                       例如：东八区传入 8 * 3600 (28800)
+ *                       西五区传入 -5 * 3600 (-18000)
+ */
+void setTimezoneByOffset(long gmt_offset_sec);
 
 
